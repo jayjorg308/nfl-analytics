@@ -1,0 +1,394 @@
+═══════════════════════════════════════════════════════════════
+NFL ANALYTICS — SCHEMA v1 (FINAL)
+═══════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────
+REFERENCE / STATIC DATA
+──────────────────────────────────────────────────────────────
+
+TABLE: season
+  - id (PK)
+  - year                        e.g., 2026
+  - startDate                   first regular season game
+  - endDate                     Super Bowl date
+  - currentWeek                 cached for performance
+  - isComplete                  boolean
+
+TABLE: stadium
+  - id (PK)
+  - name                        e.g., "Allegiant Stadium"
+  - city
+  - stateOrCountry              "NV" or "United Kingdom"
+  - latitude
+  - longitude
+  - capacity
+  - isDome                      boolean
+  - hasRetractableRoof          boolean
+  - surfaceType                 "grass" / "field turf" / "monofilament"
+  - elevationFeet               relevant for Denver, Mexico City
+  - isPrimaryHomeStadium        boolean (false for neutral-site-only venues)
+  - homeTeamId                  FK -> team (nullable for neutral-site-only)
+
+TABLE: team
+  - id (PK)
+  - name                        e.g., "Seattle Seahawks"
+  - abbreviation                e.g., "SEA"
+  - conference                  AFC / NFC
+  - division                    e.g., "NFC West"
+  - homeStadiumId               FK -> stadium
+  - logoUrl
+  - primaryColor                hex e.g., "#002244"
+  - secondaryColor              hex e.g., "#69BE28"
+
+TABLE: player
+  - id (PK)
+  - name
+  - position                    QB / RB / WR / TE / etc.
+  - jerseyNumber
+  - heightInches
+  - weightLbs
+  - dateOfBirth
+  - rookieYear
+  - headshotUrl
+
+TABLE: playerTeamMembership
+  - id (PK)
+  - playerId                    FK -> player
+  - teamId                      FK -> team
+  - startDate
+  - endDate                     nullable (null = current)
+  -- Handles mid-season trades. A player has one active membership
+  -- at a time but multiple over a career.
+
+──────────────────────────────────────────────────────────────
+GAMES AND RESULTS
+──────────────────────────────────────────────────────────────
+
+TABLE: game
+  - id (PK)
+  - seasonId                    FK -> season
+  - week                        1-18 regular season, plus playoff weeks
+  - gameType                    regular / wildcard / divisional / conference / superbowl
+  - homeTeamId                  FK -> team
+  - awayTeamId                  FK -> team
+  - stadiumId                   FK -> stadium
+  - gameDateTime
+  - isNeutralSite               boolean
+  - isInternational             boolean
+  - homeScore                   nullable until played
+  - awayScore                   nullable until played
+  - status                      scheduled / in-progress / final
+  -- Weather (relevant for outdoor games):
+  - temperature                 nullable
+  - windMph                     nullable
+  - precipitationChance         nullable
+  - weatherCondition            e.g., "clear" / "snow" / "rain"
+
+──────────────────────────────────────────────────────────────
+PLAY-BY-PLAY (THE FOUNDATION OF EPA AND ADVANCED METRICS)
+──────────────────────────────────────────────────────────────
+
+TABLE: play
+  - id (PK)
+  - gameId                      FK -> game
+  - quarter                     1-4, 5+ for OT
+  - timeRemainingSeconds        seconds remaining in quarter
+  - gameSecondsElapsed          for cross-quarter calculations
+  - possessionTeamId            FK -> team (offense)
+  - defensiveTeamId             FK -> team (defense)
+  - down                        1-4, nullable for special situations
+  - distance                    yards to first down
+  - yardlineSide                "own" / "opp" / "50"
+  - yardlineNumber              0-50
+  - yardline100                 0-100, normalized (0 = own endzone, 100 = opp endzone)
+  -- Score state before this play:
+  - scoreOffense
+  - scoreDefense
+  -- Play type and outcome:
+  - playType                    pass / run / punt / field_goal / kickoff / etc.
+  - yardsGained                 nullable
+  - isTouchdown                 boolean
+  - isFieldGoal                 boolean
+  - isFieldGoalSuccessful       boolean
+  - isPunt                      boolean
+  - isTurnover                  boolean
+  - turnoverType                interception / fumble / nullable
+  - isPenalty                   boolean
+  - penaltyYards                nullable
+  -- Players involved:
+  - passerId                    FK -> player, nullable
+  - rusherId                    FK -> player, nullable
+  - receiverId                  FK -> player, nullable
+  - tacklerId                   FK -> player, nullable (could expand to multi-player table later)
+  -- EPA values (from nflfastR or your own computation):
+  - expectedPointsBefore        EP at start of play
+  - expectedPointsAfter         EP at end of play
+  - epa                         the change (epAfter - epBefore)
+  - successRate                 boolean, was this a "successful" play
+  - isExplosive                 boolean, 20+ yard pass or 10+ yard run
+  -- Pass-specific:
+  - passLength                  short / deep / nullable
+  - airYards                    nullable
+  - yardsAfterCatch             nullable
+  - isComplete                  nullable boolean
+  -- Run-specific:
+  - rushDirection               left / middle / right / nullable
+
+──────────────────────────────────────────────────────────────
+PLAYER PERFORMANCE
+──────────────────────────────────────────────────────────────
+
+TABLE: playerGame
+  - id (PK)
+  - playerId                    FK -> player
+  - gameId                      FK -> game
+  - teamId                      FK -> team (which team they played for)
+  - opponentTeamId              FK -> team
+  - isHome                      boolean
+  - snapsPlayed
+  - snapShare                   decimal 0-1
+  -- Passing stats (primary for QB, nullable for others):
+  - passAttempts
+  - passCompletions
+  - passYards
+  - passTds
+  - passInts
+  - sacks
+  -- Rushing stats:
+  - rushAttempts
+  - rushYards
+  - rushTds
+  -- Receiving stats:
+  - targets
+  - receptions
+  - receivingYards
+  - receivingTds
+  -- Denormalized opponent context for fast splits queries:
+  - opponentDefenseRankPass     opponent's pass defense rank at time of game
+  - opponentDefenseRankRush     opponent's rush defense rank at time of game
+
+TABLE: playerSeasonStats
+  - id (PK)
+  - playerId                    FK -> player
+  - seasonId                    FK -> season
+  - teamId                      FK -> team
+  - gamesPlayed
+  -- Passing aggregates:
+  - passYardsTotal, passYardsPerGame
+  - passTdsTotal
+  - passIntsTotal
+  - completionPercentage
+  -- Rushing aggregates:
+  - rushYardsTotal, rushYardsPerGame
+  - rushTdsTotal
+  - rushAttemptsTotal
+  - yardsPerCarry
+  -- Receiving aggregates:
+  - receivingYardsTotal, receivingYardsPerGame
+  - receivingTdsTotal
+  - targetsTotal, targetsPerGame
+  - receptionsTotal, receptionsPerGame
+  -- Pre-aggregated for query performance; updated after each game
+
+──────────────────────────────────────────────────────────────
+TEAM-LEVEL ROLLING STATS (THE SNAPSHOT TABLE)
+──────────────────────────────────────────────────────────────
+
+TABLE: teamWeekStats
+  - id (PK)
+  - teamId                      FK -> team
+  - seasonId                    FK -> season
+  - week
+  -- Overall EPA:
+  - overallEpaPerPlay
+  - offensiveEpaPerPlay
+  - defensiveEpaPerPlay
+  -- Phase-specific EPA:
+  - offensivePassEpaPerPlay
+  - offensiveRushEpaPerPlay
+  - defensivePassEpaPerPlay
+  - defensiveRushEpaPerPlay
+  -- ELO:
+  - eloRating                   current rating after this week's games
+  - eloChange                   change from previous week
+  - eloRankInLeague             optional, derived from rating
+  -- Strength of schedule:
+  - sosRank
+  -- Record:
+  - recordWins
+  - recordLosses
+  - recordTies
+  -- Traditional offensive stats:
+  - pointsScoredPerGame
+  - passYardsPerGame
+  - rushYardsPerGame
+  -- Traditional defensive stats:
+  - pointsAllowedPerGame
+  - passYardsAllowedPerGame
+  - rushYardsAllowedPerGame
+  -- This is a snapshot per team per week. Querying historical
+  -- "what was SEA ranked in week 12" reads from this table.
+
+──────────────────────────────────────────────────────────────
+PLAYER PROPS
+──────────────────────────────────────────────────────────────
+
+TABLE: prop
+  - id (PK)
+  - playerId                    FK -> player
+  - gameId                      FK -> game
+  - propType                    PASS_YDS / RUSH_YDS / REC_YDS / RECEPTIONS /
+                                RUSH_ATT / PASS_TDS / PASS_COMPLETIONS /
+                                ANYTIME_TD / etc.
+  - actualValue                 nullable; populated after game
+
+TABLE: propLineSnapshot
+  - id (PK)
+  - propId                      FK -> prop
+  - capturedAt                  timestamp
+  - line                        e.g., 93.5
+  - overPrice                   e.g., -110
+  - underPrice                  e.g., -110
+  - sourceBook                  e.g., "fanduel"
+
+──────────────────────────────────────────────────────────────
+GAME ODDS
+──────────────────────────────────────────────────────────────
+
+TABLE: gameOdds
+  - id (PK)
+  - gameId                      FK -> game
+  - marketType                  SPREAD / MONEYLINE / TOTAL
+  - actualResult                nullable; populated after game
+                                -- SPREAD: actual margin (positive = home covered)
+                                -- MONEYLINE: winning teamId
+                                -- TOTAL: actual combined score
+
+TABLE: gameOddsSnapshot
+  - id (PK)
+  - gameOddsId                  FK -> gameOdds
+  - capturedAt                  timestamp
+  - sourceBook                  e.g., "fanduel"
+  -- Spread fields (populated when marketType = SPREAD):
+  - homeSpread                  e.g., -4.5
+  - homeSpreadPrice             e.g., -112
+  - awaySpreadPrice             e.g., -108
+  -- Moneyline fields (populated when marketType = MONEYLINE):
+  - homeMoneyline               e.g., -230
+  - awayMoneyline               e.g., +190
+  -- Total fields (populated when marketType = TOTAL):
+  - total                       e.g., 45.5
+  - overPrice                   e.g., -108
+  - underPrice                  e.g., -112
+
+──────────────────────────────────────────────────────────────
+INJURIES
+──────────────────────────────────────────────────────────────
+
+TABLE: playerInjury
+  - id (PK)
+  - playerId                    FK -> player
+  - seasonId                    FK -> season
+  - injuryType                  e.g., "ankle" / "knee" / "hamstring" / "concussion"
+  - initialReportDate
+  - initialStatus               questionable / doubtful / out / IR
+  - resolvedDate                nullable
+
+TABLE: playerInjuryStatus
+  - id (PK)
+  - playerInjuryId              FK -> playerInjury
+  - reportedAt                  timestamp
+  - status                      questionable / doubtful / out / IR / activated
+  - practiceParticipation       full / limited / dnp / nullable
+  - notes                       nullable text
+
+═══════════════════════════════════════════════════════════════
+DEFERRED TO v2
+═══════════════════════════════════════════════════════════════
+
+TABLE: gamePrediction (your own model's projections)
+  - id, gameId, predictedHomeScore, predictedAwayScore,
+    predictedHomeWinProbability, createdAt, modelVersion
+
+POSITION-ROLE DEFENSIVE RANKINGS
+  - Compute your own opponent EPA allowed by receiver target-share role
+  - Store as snapshots per team per week
+
+DVOA INTEGRATION (if subscribing to FootballOutsiders/FTN)
+
+═══════════════════════════════════════════════════════════════
+KEY DESIGN PRINCIPLES BAKED IN
+═══════════════════════════════════════════════════════════════
+
+1. TEMPORAL CORRECTNESS
+   - teamWeekStats snapshots every week (no "current value only")
+   - ELO rating snapshotted alongside other weekly metrics
+   - propLineSnapshot and gameOddsSnapshot for line history
+   - playerInjuryStatus tracks status changes over time
+   - opponentDefenseRank* denormalized onto playerGame at ingestion
+
+2. INDEPENDENT ENTITIES IN SEPARATE TABLES
+   - season, stadium, team, player are independent reference data
+   - Stadiums separate from teams (handles neutral sites, relocations)
+   - Player team membership separate from player (handles trades)
+   - Injuries separate from players (handles multiple injuries per season)
+   - Injury status separate from injury (tracks weekly updates)
+
+3. DENORMALIZED WHERE QUERY PATTERNS DEMAND IT
+   - Opponent defense ranks on playerGame (for fast splits queries)
+   - Weather on game (always needed alongside game data)
+   - Season aggregates pre-computed in playerSeasonStats
+
+4. STRUCTURAL SYMMETRY
+   - Props and game odds follow the same pattern:
+     parent record + snapshot table for line history
+   - Makes ingestion and UI code consistent
+
+5. PLAY-BY-PLAY AS FOUNDATION
+   - Raw play data stored in postgres for direct querying
+   - Aggregates pre-computed for UI performance
+   - Research questions answerable via SQL against your own DB
+
+═══════════════════════════════════════════════════════════════
+INDEXES TO ADD AT BUILD TIME
+═══════════════════════════════════════════════════════════════
+
+- All foreign keys (Drizzle won't index these automatically)
+- game(seasonId, week) for weekly queries
+- playerGame(playerId, gameId) unique constraint
+- play(gameId) for game-level queries
+- play(possessionTeamId, gameId) for team queries
+- play(passerId), play(rusherId), play(receiverId) for player queries
+- teamWeekStats(teamId, seasonId, week) unique constraint
+- propLineSnapshot(propId, capturedAt) for time-ordered queries
+- gameOddsSnapshot(gameOddsId, capturedAt) for time-ordered queries
+- playerInjuryStatus(playerInjuryId, reportedAt) for time-ordered queries
+
+═══════════════════════════════════════════════════════════════
+INGESTION ORDER (CHICKEN-AND-EGG MANAGEMENT)
+═══════════════════════════════════════════════════════════════
+
+Weekly ingestion sequence after games complete:
+
+1. Update game records with final scores
+2. Insert play-by-play data into `play` table
+3. Compute and update teamWeekStats:
+   - EPA aggregates from plays
+   - ELO recalculation (depends on prior week's ELO + this week's results)
+   - SOS update
+   - Traditional stat aggregates
+4. Update playerGame records:
+   - Per-player per-game stats from box scores
+   - Denormalize opponentDefenseRank* from teamWeekStats (uses values
+     computed in step 3 — must happen after)
+5. Update playerSeasonStats:
+   - Roll up player game stats into season aggregates
+6. Update injury reports
+7. Update prop/odds actualValue and actualResult fields for completed games
+
+Continuous (multiple times per week):
+
+- Snapshot prop lines from The Odds API
+- Snapshot game odds from The Odds API
+- Update upcoming game weather forecasts
+- Update injury status reports
