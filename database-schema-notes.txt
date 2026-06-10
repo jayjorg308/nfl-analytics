@@ -1,6 +1,10 @@
 ═══════════════════════════════════════════════════════════════
-NFL ANALYTICS — SCHEMA v1 (FINAL)
+NFL ANALYTICS — SCHEMA v1 (FINAL, POST-DESIGN-REVIEW)
 ═══════════════════════════════════════════════════════════════
+
+This document captures the v1 schema as designed through extensive
+design conversations and an ADR review cycle. For architectural
+context behind specific decisions, see docs/adr/.
 
 ──────────────────────────────────────────────────────────────
 REFERENCE / STATIC DATA
@@ -83,6 +87,8 @@ TABLE: game
   - windMph                     nullable
   - precipitationChance         nullable
   - weatherCondition            e.g., "clear" / "snow" / "rain"
+  -- Note: in-progress live score is NOT stored. Live-score badge
+  -- fetches from ESPN's hidden API on demand (see ADR-0006).
 
 ──────────────────────────────────────────────────────────────
 PLAY-BY-PLAY (THE FOUNDATION OF EPA AND ADVANCED METRICS)
@@ -120,7 +126,7 @@ TABLE: play
   - rusherId                    FK -> player, nullable
   - receiverId                  FK -> player, nullable
   - tacklerId                   FK -> player, nullable (could expand to multi-player table later)
-  -- EPA values (from nflfastR or your own computation):
+  -- EPA values (from nflfastR, ingested as-is in v1):
   - expectedPointsBefore        EP at start of play
   - expectedPointsAfter         EP at end of play
   - epa                         the change (epAfter - epBefore)
@@ -163,9 +169,17 @@ TABLE: playerGame
   - receptions
   - receivingYards
   - receivingTds
-  -- Denormalized opponent context for fast splits queries:
+  -- Denormalized share metrics (computed at ingestion — see ADR-0011):
+  - targetShare                 decimal 0-1; player's targets / team's total targets in game
+  - rushAttemptShare            decimal 0-1; player's rushes / team's total rushes in game
+  - airYardsShare               decimal 0-1; player's air yards / team's total pass air yards in game
+  -- Denormalized opponent context (computed at ingestion, after teamWeekStats):
   - opponentDefenseRankPass     opponent's pass defense rank at time of game
   - opponentDefenseRankRush     opponent's rush defense rank at time of game
+  -- Running season-to-date totals (computed at ingestion — see ADR-0011):
+  - seasonToDatePassYards       sum of passYards for prior games in season
+  - seasonToDateRushYards       sum of rushYards for prior games in season
+  - seasonToDateRecYards        sum of receivingYards for prior games in season
 
 TABLE: playerSeasonStats
   - id (PK)
@@ -199,7 +213,8 @@ TABLE: teamWeekStats
   - teamId                      FK -> team
   - seasonId                    FK -> season
   - week
-  -- Overall EPA:
+  -- Overall EPA (defensive values stored as "what they allow":
+  -- negative = good defense, positive = bad defense — see ADR-0002):
   - overallEpaPerPlay
   - offensiveEpaPerPlay
   - defensiveEpaPerPlay
@@ -208,7 +223,7 @@ TABLE: teamWeekStats
   - offensiveRushEpaPerPlay
   - defensivePassEpaPerPlay
   - defensiveRushEpaPerPlay
-  -- ELO:
+  -- ELO (computed in-house — see ADR-0004):
   - eloRating                   current rating after this week's games
   - eloChange                   change from previous week
   - eloRankInLeague             optional, derived from rating
@@ -302,6 +317,56 @@ TABLE: playerInjuryStatus
   - practiceParticipation       full / limited / dnp / nullable
   - notes                       nullable text
 
+──────────────────────────────────────────────────────────────
+INGESTION INFRASTRUCTURE
+──────────────────────────────────────────────────────────────
+
+TABLE: jobQueue
+  - id (PK)
+  - jobType                     e.g., "ingest_play_by_play_week" / "compute_team_week_stats"
+  - payload                     JSON; job-specific parameters (week, season, etc.)
+  - status                      pending / in_progress / completed / failed
+  - attempts                    integer; for retry tracking
+  - lastError                   nullable text
+  - createdAt
+  - startedAt                   nullable
+  - completedAt                 nullable
+  -- Supports the chunking pattern from ADR-0008. When a weekly
+  -- ingestion job exceeds Vercel's 300s timeout, work is split
+  -- across multiple invocations using this queue.
+
+──────────────────────────────────────────────────────────────
+VIEWS
+──────────────────────────────────────────────────────────────
+
+VIEW: weekSummary
+  -- One row per game for a given week. Used by the Slate Dashboard
+  -- to render all game cards from a single query rather than N parallel
+  -- queries per card (see ADR-0009).
+  --
+  -- Columns include both teams' EPA values across phases, both teams'
+  -- records and SOS, weather snapshot, betting line at most recent capture,
+  -- computed top edge value, biggest-edge label.
+  --
+  -- Starts as a regular SQL view. Promote to MATERIALIZED VIEW if
+  -- dashboard query performance demands it.
+
+═══════════════════════════════════════════════════════════════
+AUTH (HANDLED OUTSIDE POSTGRES — see ADR-0005)
+═══════════════════════════════════════════════════════════════
+
+User identity is handled by Clerk, not stored in Postgres.
+
+Three access tiers:
+  - public read: no auth required (research section, about pages)
+  - friend-gated read: Clerk-authenticated user (dashboard, game/player/
+    props/team pages)
+  - admin write: Clerk-authenticated AND user ID matches hardcoded admin
+    (manual data entry/correction UI)
+
+No `user` table in v1. Per-user features (preferences, pick tracking)
+are explicitly v2.
+
 ═══════════════════════════════════════════════════════════════
 DEFERRED TO v2
 ═══════════════════════════════════════════════════════════════
@@ -310,11 +375,70 @@ TABLE: gamePrediction (your own model's projections)
   - id, gameId, predictedHomeScore, predictedAwayScore,
     predictedHomeWinProbability, createdAt, modelVersion
 
-POSITION-ROLE DEFENSIVE RANKINGS
+POSITION-ROLE DEFENSIVE RANKINGS (more likely v2 path than DVOA)
   - Compute your own opponent EPA allowed by receiver target-share role
   - Store as snapshots per team per week
 
-DVOA INTEGRATION (if subscribing to FootballOutsiders/FTN)
+DVOA INTEGRATION (conditional on subscription decision)
+
+ELO MARGIN-OF-VICTORY ADJUSTMENT
+  - v1 ELO uses standard formula with K=20, no MOV adjustment
+
+VARIANCE-AWARE PROP RANKING
+  - v1 uses simple mean-based edges; v2 adds distribution-aware metrics
+    (median, percentiles, fitted distributions)
+
+LIVE IN-GAME STATE BEYOND THE LIVE-SCORE BADGE
+  - Live EPA, live stats, in-game line movement — dedicated v2 milestone
+
+LIVE IN-GAME PROP RESEARCH WORKFLOW
+  - "L3 second-half production while the under is in play"
+
+PER-USER FEATURES
+  - Preferences, pick tracking, favorite teams, alerts — dedicated v2 milestone
+  - Adds a `user` table referencing Clerk user IDs
+
+ALL-32-TEAMS ELO TRAJECTORY CHART
+  - Visualization for the research section
+
+HISTORICAL LINE-TRACKING VISUALIZATION
+  - Schema supports it; UI is v2
+
+COMPARISON VIEWS
+  - Team-vs-team or player-vs-player head-to-head pages
+
+DEFENSIVE PLAYER ANALYSIS
+  - Individual defensive player stats (sacks, INTs, tackles, coverage metrics)
+  - Schema currently offense-focused
+
+SPECIAL TEAMS ANALYSIS
+  - Beyond team-level aggregates; kicker/punter/return-game stats
+
+HISTORICAL SEASONS IN THE GATED APP
+  - "View week 8 of 2022" mode
+  - Historical data exists via backfill; gated app assumes current season
+
+═══════════════════════════════════════════════════════════════
+DEFERRED TO v3+
+═══════════════════════════════════════════════════════════════
+
+MULTI-AUTHOR RESEARCH SECTION
+  - Guest contributors, multi-voice publication — strategic decision
+
+EVENT-DRIVEN INGESTION TRIGGERS
+  - Webhook-driven vs scheduled cron — scale problem we don't have
+
+BACKTESTING PERSONAL PICKS AGAINST ACTUALS
+  - Requires picks table, picks UI, friend coordination, backtest framework
+
+MOBILE-OPTIMIZED UI
+  - v1 and v2 are responsive-only, desktop-first
+
+NOTIFICATION SYSTEM
+  - Email/push for line movements, injuries, publishing — needs infrastructure
+
+PUBLIC API
+  - External consumers building on the data — not planned
 
 ═══════════════════════════════════════════════════════════════
 KEY DESIGN PRINCIPLES BAKED IN
@@ -326,6 +450,7 @@ KEY DESIGN PRINCIPLES BAKED IN
    - propLineSnapshot and gameOddsSnapshot for line history
    - playerInjuryStatus tracks status changes over time
    - opponentDefenseRank* denormalized onto playerGame at ingestion
+   - seasonToDate* totals materialized at ingestion to avoid window-function bugs
 
 2. INDEPENDENT ENTITIES IN SEPARATE TABLES
    - season, stadium, team, player are independent reference data
@@ -334,20 +459,39 @@ KEY DESIGN PRINCIPLES BAKED IN
    - Injuries separate from players (handles multiple injuries per season)
    - Injury status separate from injury (tracks weekly updates)
 
-3. DENORMALIZED WHERE QUERY PATTERNS DEMAND IT
+3. WRONG-SHAPE vs JUST-SLOW (see ADR-0009)
+   - Materialize when natural code organization would lead to N+1 queries
+     or repeated complex joins (wrong-shape)
+   - Query live when single query is just slower than ideal (just-slow)
+   - Example wrong-shape: target share used in many views and split queries
+     → materialized on playerGame
+   - Example just-slow: streak computation for dashboard cards
+     → query-time, indexed scan, cheap
+
+4. DENORMALIZED WHERE QUERY PATTERNS DEMAND IT
    - Opponent defense ranks on playerGame (for fast splits queries)
+   - Share metrics (target/rush/airYards) on playerGame (used everywhere)
    - Weather on game (always needed alongside game data)
    - Season aggregates pre-computed in playerSeasonStats
+   - Running season-to-date totals on playerGame (avoids window functions)
 
-4. STRUCTURAL SYMMETRY
+5. STRUCTURAL SYMMETRY
    - Props and game odds follow the same pattern:
      parent record + snapshot table for line history
    - Makes ingestion and UI code consistent
 
-5. PLAY-BY-PLAY AS FOUNDATION
+6. PLAY-BY-PLAY AS FOUNDATION
    - Raw play data stored in postgres for direct querying
    - Aggregates pre-computed for UI performance
    - Research questions answerable via SQL against your own DB
+
+7. EDGE COMPUTATION SIGN CONVENTION (see ADR-0002)
+   - Defensive EPA stored as "what they allow":
+     negative = good defense, positive = bad defense
+   - Matchup edge formula: offensiveEpaPerPlay + defensiveEpaPerPlay
+     (addition, not subtraction — defensive sign already encodes direction)
+   - Positive edge favors offense; negative favors defense
+   - Top-edge selection: max absolute value across four matchups
 
 ═══════════════════════════════════════════════════════════════
 INDEXES TO ADD AT BUILD TIME
@@ -355,7 +499,10 @@ INDEXES TO ADD AT BUILD TIME
 
 - All foreign keys (Drizzle won't index these automatically)
 - game(seasonId, week) for weekly queries
+- game(gameDateTime) for time-ordered queries (streak, rest)
 - playerGame(playerId, gameId) unique constraint
+- playerGame(playerId, gameId, opponentDefenseRankPass) for splits queries
+- playerGame(playerId, gameId, opponentDefenseRankRush) for splits queries
 - play(gameId) for game-level queries
 - play(possessionTeamId, gameId) for team queries
 - play(passerId), play(rusherId), play(receiverId) for player queries
@@ -363,12 +510,14 @@ INDEXES TO ADD AT BUILD TIME
 - propLineSnapshot(propId, capturedAt) for time-ordered queries
 - gameOddsSnapshot(gameOddsId, capturedAt) for time-ordered queries
 - playerInjuryStatus(playerInjuryId, reportedAt) for time-ordered queries
+- jobQueue(status, jobType) for finding pending work
 
 ═══════════════════════════════════════════════════════════════
 INGESTION ORDER (CHICKEN-AND-EGG MANAGEMENT)
 ═══════════════════════════════════════════════════════════════
 
-Weekly ingestion sequence after games complete:
+Weekly ingestion sequence after games complete (triggered Sunday/Monday/
+Thursday nights ~30min after final game ends — see ADR-0006):
 
 1. Update game records with final scores
 2. Insert play-by-play data into `play` table
@@ -379,8 +528,10 @@ Weekly ingestion sequence after games complete:
    - Traditional stat aggregates
 4. Update playerGame records:
    - Per-player per-game stats from box scores
+   - Compute targetShare, rushAttemptShare, airYardsShare from team totals
    - Denormalize opponentDefenseRank* from teamWeekStats (uses values
      computed in step 3 — must happen after)
+   - Compute and store seasonToDate* totals (sum prior games in season)
 5. Update playerSeasonStats:
    - Roll up player game stats into season aggregates
 6. Update injury reports
@@ -390,5 +541,50 @@ Continuous (multiple times per week):
 
 - Snapshot prop lines from The Odds API
 - Snapshot game odds from The Odds API
-- Update upcoming game weather forecasts
+- Update upcoming game weather forecasts (Open-Meteo)
 - Update injury status reports
+
+On-demand (page render):
+
+- Live-score badge: ESPN hidden API for in-progress games, cached 30s
+
+Manual (admin write UI):
+
+- Corrections to any table where automated ingestion has gaps
+- Particularly injuries (nflverse load_injuries reportedly less reliable)
+- Weather post-game corrections for outdoor games
+
+One-time/rare (local Python scripts, not deployed):
+
+- Historical backfill (run from laptop, writes directly to Neon)
+- See scripts/backfill/ for nfl_data_py-based scripts
+
+═══════════════════════════════════════════════════════════════
+v1 SHIP CRITERIA (see ADR-0012)
+═══════════════════════════════════════════════════════════════
+
+v1 is "live" when:
+
+1. All 6 gated views feature-complete with real current-season data:
+   - Slate Dashboard
+   - Game Detail Page
+   - Player Page (position-aware: QB / RB / WR-TE variants)
+   - Props Page
+   - Team Page
+   - Team Leaderboard
+
+2. At least one substantive published investigation in the research
+   section demonstrating MDX pipeline + interactive charts end-to-end
+
+3. Weekly post-game ingestion stable for 3-4 consecutive weeks without
+   manual intervention, including observed recovery from at least one
+   minor failure
+
+4. Analytical verification: at least 3 games' worth of matchup edges and
+   ELO outcomes hand-verified against the system's outputs
+
+5. Clerk auth working with all three tiers (public / friend-gated / admin)
+   enforced correctly
+
+6. Deployed under portfolio domain, public surfaces indexable, gated
+   surfaces requiring auth

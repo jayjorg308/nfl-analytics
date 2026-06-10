@@ -1,5 +1,11 @@
 @AGENTS.md
 
+## Working principles
+
+When making architectural or design decisions on this project, first check `docs/adr/` for an existing ADR that covers the question. If one exists, apply it. If none exists, surface the decision before implementing — we may need to write a new ADR.
+
+When a new architectural decision is made during implementation, draft an ADR following the format of the existing ones in `docs/adr/` before considering the work complete.
+
 ## Agent skills
 
 ### Issue tracker
