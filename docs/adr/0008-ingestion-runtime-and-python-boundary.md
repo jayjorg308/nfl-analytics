@@ -7,3 +7,13 @@ The TypeScript-Python ecosystem gap is bridged by **reading nflverse parquet rel
 Heavy weekly jobs that may exceed Vercel's 300s timeout (large play-by-play parquet upserts plus downstream EPA/ELO aggregation) are **chunked via a `jobQueue` table in Postgres** — pending work items tracked as rows, each cron invocation drains as many as fit in its window and marks them complete, the next invocation resumes. Standard pattern, no separate service required, and crash-safe by construction (a job interrupted mid-window picks up on the next tick).
 
 Historical backfill (one-time bulk load of multiple seasons) runs as a **local one-shot Python script** in `scripts/backfill/`, executed from the author's laptop and writing directly to Neon over a connection string. Not deployed, not scheduled, not part of the production system. Uses `nfl_data_py` because Python's nflverse tooling is materially more mature for bulk operations than hand-fetching parquet files in Node — and backfill is rare enough (run once per historical range extension) that pulling it into production would burden the architecture for an operation that doesn't justify it. Idempotent so re-runs don't duplicate data. Lives in the repo for documentation; never deployed.
+
+## Slice 3 sub-phases
+
+Slice 3 — "real ingestion" — is not a single deliverable. It splits into two phases with a strict ordering:
+
+**Phase 3a: historical backfill** (local Python, one-time). Computes EPA-derived `teamWeekStats`, ELO trajectories, and player-game records across the prior N = 5 seasons. Uses the `scripts/backfill/` machinery described above. Runs from the author's laptop with the prod Neon connection string, writes directly to prod. Completes before Phase 3b's cron is enabled.
+
+**Phase 3b: current-season cron** (Vercel cron functions, ongoing). Picks up from Phase 3a's terminal state — the prior season's final ELO is the input to the current season's Week-0 regression per ADR-0004 — and runs the weekly post-game ingestion path documented above.
+
+3a as prerequisite to 3b is what makes the dashboard's ELO column meaningful from Week 1 onwards. Running 3b first, or skipping 3a entirely, would produce 8-10 weeks of noise-dominated ELO on a user-facing surface (per ADR-0004's "Historical bootstrap prerequisite") — which would invalidate the analytical credibility of the Slice 3 ship and force a backfill-then-rerender remediation under time pressure.
