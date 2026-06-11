@@ -26,5 +26,9 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-export const db = drizzle(pool, { schema });
+// NOTE: `casing: "snake_case"` must match drizzle.config.ts. The config's
+// casing affects generation only; the runtime client needs it separately
+// to map camelCase TS property names to snake_case SQL column names in
+// queries. Forget this and inserts/updates fail with "column does not exist".
+export const db = drizzle(pool, { schema, casing: "snake_case" });
 export type Db = typeof db;

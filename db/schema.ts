@@ -18,6 +18,7 @@ import {
   integer,
   pgEnum,
   pgTable,
+  pgView,
   smallint,
   text,
   timestamp,
@@ -209,3 +210,79 @@ export const teamWeekStatsRelations = relations(teamWeekStats, ({ one }) => ({
     references: [season.id],
   }),
 }));
+
+// ============================================================================
+// VIEWS
+// ============================================================================
+
+// Slate Dashboard read shape. View body lives in raw SQL — see
+// drizzle/0001_create_week_summary_view.sql. ADR-0009 establishes the
+// view-as-read-shape pattern; ADR-0002 specifies the edge formula.
+//
+// Column order here MUST match the view body's SELECT order — Drizzle
+// only validates types, not ordering. Future additions go at the END of
+// both the view body and this declaration (CREATE OR REPLACE VIEW can
+// add columns at the end but cannot reorder existing ones).
+
+export type TopEdgeLabel =
+  | "home_pass"
+  | "home_rush"
+  | "away_pass"
+  | "away_rush";
+
+export const weekSummary = pgView("week_summary", {
+  // Identity & game context
+  gameId: bigint({ mode: "number" }).notNull(),
+  seasonId: bigint({ mode: "number" }).notNull(),
+  week: smallint().notNull(),
+  gameType: gameTypeEnum().notNull(),
+  gameDateTime: timestamp({ withTimezone: true, mode: "date" }).notNull(),
+  isNeutralSite: boolean().notNull(),
+  isInternational: boolean().notNull(),
+  // Weather (nullable for dome games and unforecast future games)
+  temperature: integer(),
+  windMph: integer(),
+  precipitationChance: integer(),
+  weatherCondition: text(),
+  // Home team identity & standing
+  homeTeamId: bigint({ mode: "number" }).notNull(),
+  homeTeamAbbreviation: text().notNull(),
+  homeRecordWins: integer().notNull(),
+  homeRecordLosses: integer().notNull(),
+  homeRecordTies: integer().notNull(),
+  homeEloRating: doublePrecision().notNull(),
+  homeSosRank: integer().notNull(),
+  // Home team EPA
+  homeOverallEpaPerPlay: doublePrecision().notNull(),
+  homeOffensiveEpaPerPlay: doublePrecision().notNull(),
+  homeDefensiveEpaPerPlay: doublePrecision().notNull(),
+  homeOffensivePassEpaPerPlay: doublePrecision().notNull(),
+  homeOffensiveRushEpaPerPlay: doublePrecision().notNull(),
+  homeDefensivePassEpaPerPlay: doublePrecision().notNull(),
+  homeDefensiveRushEpaPerPlay: doublePrecision().notNull(),
+  // Away team identity & standing
+  awayTeamId: bigint({ mode: "number" }).notNull(),
+  awayTeamAbbreviation: text().notNull(),
+  awayRecordWins: integer().notNull(),
+  awayRecordLosses: integer().notNull(),
+  awayRecordTies: integer().notNull(),
+  awayEloRating: doublePrecision().notNull(),
+  awaySosRank: integer().notNull(),
+  // Away team EPA
+  awayOverallEpaPerPlay: doublePrecision().notNull(),
+  awayOffensiveEpaPerPlay: doublePrecision().notNull(),
+  awayDefensiveEpaPerPlay: doublePrecision().notNull(),
+  awayOffensivePassEpaPerPlay: doublePrecision().notNull(),
+  awayOffensiveRushEpaPerPlay: doublePrecision().notNull(),
+  awayDefensivePassEpaPerPlay: doublePrecision().notNull(),
+  awayDefensiveRushEpaPerPlay: doublePrecision().notNull(),
+  // Per-matchup edges
+  homePassEdge: doublePrecision().notNull(),
+  homeRushEdge: doublePrecision().notNull(),
+  awayPassEdge: doublePrecision().notNull(),
+  awayRushEdge: doublePrecision().notNull(),
+  // Top edge resolution
+  topEdgeLabel: text().$type<TopEdgeLabel>().notNull(),
+  topEdgeValue: doublePrecision().notNull(),
+  topEdgeMagnitude: doublePrecision().notNull(),
+}).existing();

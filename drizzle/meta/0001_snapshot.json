@@ -1,0 +1,604 @@
+{
+  "id": "ff0c845b-597b-4626-aed8-4fe1571622a9",
+  "prevId": "7a55461d-d086-48f9-8481-d1cf46a71f5f",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.game": {
+      "name": "game",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "season_id": {
+          "name": "season_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "week": {
+          "name": "week",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "game_type": {
+          "name": "game_type",
+          "type": "game_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "home_team_id": {
+          "name": "home_team_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "away_team_id": {
+          "name": "away_team_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "game_date_time": {
+          "name": "game_date_time",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "is_neutral_site": {
+          "name": "is_neutral_site",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "is_international": {
+          "name": "is_international",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "home_score": {
+          "name": "home_score",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "away_score": {
+          "name": "away_score",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "game_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'scheduled'"
+        },
+        "temperature": {
+          "name": "temperature",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wind_mph": {
+          "name": "wind_mph",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "precipitation_chance": {
+          "name": "precipitation_chance",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "weather_condition": {
+          "name": "weather_condition",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "nflverse_game_id": {
+          "name": "nflverse_game_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "odds_api_event_id": {
+          "name": "odds_api_event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "game_season_week_idx": {
+          "name": "game_season_week_idx",
+          "columns": [
+            {
+              "expression": "season_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "week",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "game_game_date_time_idx": {
+          "name": "game_game_date_time_idx",
+          "columns": [
+            {
+              "expression": "game_date_time",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "game_home_team_id_idx": {
+          "name": "game_home_team_id_idx",
+          "columns": [
+            {
+              "expression": "home_team_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "game_away_team_id_idx": {
+          "name": "game_away_team_id_idx",
+          "columns": [
+            {
+              "expression": "away_team_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "game_season_id_season_id_fk": {
+          "name": "game_season_id_season_id_fk",
+          "tableFrom": "game",
+          "columnsFrom": [
+            "season_id"
+          ],
+          "tableTo": "season",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "game_home_team_id_team_id_fk": {
+          "name": "game_home_team_id_team_id_fk",
+          "tableFrom": "game",
+          "columnsFrom": [
+            "home_team_id"
+          ],
+          "tableTo": "team",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "game_away_team_id_team_id_fk": {
+          "name": "game_away_team_id_team_id_fk",
+          "tableFrom": "game",
+          "columnsFrom": [
+            "away_team_id"
+          ],
+          "tableTo": "team",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "game_nflverse_game_id_unique": {
+          "name": "game_nflverse_game_id_unique",
+          "columns": [
+            "nflverse_game_id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.season": {
+      "name": "season",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "year": {
+          "name": "year",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start_date": {
+          "name": "start_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end_date": {
+          "name": "end_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "season_year_unique": {
+          "name": "season_year_unique",
+          "columns": [
+            "year"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.team": {
+      "name": "team",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "abbreviation": {
+          "name": "abbreviation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "conference": {
+          "name": "conference",
+          "type": "conference",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "division": {
+          "name": "division",
+          "type": "division",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "team_abbreviation_unique": {
+          "name": "team_abbreviation_unique",
+          "columns": [
+            "abbreviation"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "team_abbreviation_format": {
+          "name": "team_abbreviation_format",
+          "value": "\"team\".\"abbreviation\" ~ '^[A-Z]{2,3}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.team_week_stats": {
+      "name": "team_week_stats",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "team_id": {
+          "name": "team_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "season_id": {
+          "name": "season_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "week": {
+          "name": "week",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "overall_epa_per_play": {
+          "name": "overall_epa_per_play",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "offensive_epa_per_play": {
+          "name": "offensive_epa_per_play",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "defensive_epa_per_play": {
+          "name": "defensive_epa_per_play",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "offensive_pass_epa_per_play": {
+          "name": "offensive_pass_epa_per_play",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "offensive_rush_epa_per_play": {
+          "name": "offensive_rush_epa_per_play",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "defensive_pass_epa_per_play": {
+          "name": "defensive_pass_epa_per_play",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "defensive_rush_epa_per_play": {
+          "name": "defensive_rush_epa_per_play",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "elo_rating": {
+          "name": "elo_rating",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "elo_change": {
+          "name": "elo_change",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sos_rank": {
+          "name": "sos_rank",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "record_wins": {
+          "name": "record_wins",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "record_losses": {
+          "name": "record_losses",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "record_ties": {
+          "name": "record_ties",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "points_scored_per_game": {
+          "name": "points_scored_per_game",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pass_yards_per_game": {
+          "name": "pass_yards_per_game",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rush_yards_per_game": {
+          "name": "rush_yards_per_game",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "points_allowed_per_game": {
+          "name": "points_allowed_per_game",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pass_yards_allowed_per_game": {
+          "name": "pass_yards_allowed_per_game",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rush_yards_allowed_per_game": {
+          "name": "rush_yards_allowed_per_game",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "team_week_stats_season_id_idx": {
+          "name": "team_week_stats_season_id_idx",
+          "columns": [
+            {
+              "expression": "season_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "team_week_stats_team_id_team_id_fk": {
+          "name": "team_week_stats_team_id_team_id_fk",
+          "tableFrom": "team_week_stats",
+          "columnsFrom": [
+            "team_id"
+          ],
+          "tableTo": "team",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "team_week_stats_season_id_season_id_fk": {
+          "name": "team_week_stats_season_id_season_id_fk",
+          "tableFrom": "team_week_stats",
+          "columnsFrom": [
+            "season_id"
+          ],
+          "tableTo": "season",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "team_week_stats_team_season_week_unique": {
+          "name": "team_week_stats_team_season_week_unique",
+          "columns": [
+            "team_id",
+            "season_id",
+            "week"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.conference": {
+      "name": "conference",
+      "schema": "public",
+      "values": [
+        "afc",
+        "nfc"
+      ]
+    },
+    "public.division": {
+      "name": "division",
+      "schema": "public",
+      "values": [
+        "afc_east",
+        "afc_north",
+        "afc_south",
+        "afc_west",
+        "nfc_east",
+        "nfc_north",
+        "nfc_south",
+        "nfc_west"
+      ]
+    },
+    "public.game_status": {
+      "name": "game_status",
+      "schema": "public",
+      "values": [
+        "scheduled",
+        "in_progress",
+        "final"
+      ]
+    },
+    "public.game_type": {
+      "name": "game_type",
+      "schema": "public",
+      "values": [
+        "regular",
+        "wildcard",
+        "divisional",
+        "conference",
+        "super_bowl"
+      ]
+    }
+  },
+  "schemas": {},
+  "views": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
