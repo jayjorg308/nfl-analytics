@@ -1,9 +1,10 @@
 ═══════════════════════════════════════════════════════════════
-NFL ANALYTICS — SCHEMA v1 (FINAL, POST-DESIGN-REVIEW)
+NFL ANALYTICS — SCHEMA v1 (FINAL, POST-PARQUET-SPIKE)
 ═══════════════════════════════════════════════════════════════
 
 This document captures the v1 schema as designed through extensive
-design conversations and an ADR review cycle. For architectural
+design conversations, an ADR review cycle, and a parquet-in-Node
+spike that confirmed the ingestion architecture. For architectural
 context behind specific decisions, see docs/adr/.
 
 ──────────────────────────────────────────────────────────────
@@ -82,7 +83,7 @@ TABLE: game
   - homeScore                   nullable until played
   - awayScore                   nullable until played
   - status                      scheduled / in-progress / final
-  -- Weather (relevant for outdoor games):
+  -- Weather (relevant for outdoor games; null for dome games):
   - temperature                 nullable
   - windMph                     nullable
   - precipitationChance         nullable
@@ -91,12 +92,41 @@ TABLE: game
   -- fetches from ESPN's hidden API on demand (see ADR-0006).
 
 ──────────────────────────────────────────────────────────────
+DRIVES (NEW IN POST-SPIKE REVISION)
+──────────────────────────────────────────────────────────────
+
+TABLE: drive
+  - id (PK)
+  - gameId                      FK -> game
+  - driveNumber                 the canonical drive number (from nflverse fixed_drive)
+  - possessionTeamId            FK -> team
+  - playCount                   number of plays in the drive
+  - timeOfPossession            string format "4:30" (preserves the colon format)
+  - firstDowns                  count of first downs achieved on this drive
+  - insideTwenty                boolean; did the drive reach the opponent's 20
+  - endedWithScore              boolean
+  - quarterStart                quarter when drive began
+  - quarterEnd                  quarter when drive ended
+  - yardsPenalized              total penalty yards on the drive
+  - startTransition             e.g., "KICKOFF" / "PUNT" / "INTERCEPTION" / "FUMBLE"
+  - endTransition               e.g., "TOUCHDOWN" / "PUNT" / "FIELD_GOAL" / "TURNOVER"
+  - gameClockStart              string e.g., "04:58"
+  - gameClockEnd                string e.g., "00:28"
+  - startYardLine               string e.g., "ARI 29"
+  - endYardLine                 string e.g., "NO 4"
+  - result                      e.g., "Touchdown" / "Punt" / "Field goal" / "Turnover"
+  -- One row per drive per game. Unique constraint: (gameId, driveNumber).
+  -- Drive data is replicated on every play row in the parquet; ingestion
+  -- deduplicates to one row per (gameId, driveNumber).
+
+──────────────────────────────────────────────────────────────
 PLAY-BY-PLAY (THE FOUNDATION OF EPA AND ADVANCED METRICS)
 ──────────────────────────────────────────────────────────────
 
 TABLE: play
   - id (PK)
   - gameId                      FK -> game
+  - driveId                     FK -> drive (NEW — replaces raw drive number)
   - quarter                     1-4, 5+ for OT
   - timeRemainingSeconds        seconds remaining in quarter
   - gameSecondsElapsed          for cross-quarter calculations
@@ -107,7 +137,7 @@ TABLE: play
   - yardlineSide                "own" / "opp" / "50"
   - yardlineNumber              0-50
   - yardline100                 0-100, normalized (0 = own endzone, 100 = opp endzone)
-  -- Score state before this play:
+  -- Score state before this play (from posteam_score / defteam_score in parquet):
   - scoreOffense
   - scoreDefense
   -- Play type and outcome:
@@ -127,11 +157,15 @@ TABLE: play
   - receiverId                  FK -> player, nullable
   - tacklerId                   FK -> player, nullable (could expand to multi-player table later)
   -- EPA values (from nflfastR, ingested as-is in v1):
-  - expectedPointsBefore        EP at start of play
+  - expectedPointsBefore        EP at start of play (parquet: ep)
   - expectedPointsAfter         EP at end of play
   - epa                         the change (epAfter - epBefore)
-  - successRate                 boolean, was this a "successful" play
+  - isSuccessful                boolean (RENAMED from successRate; from parquet: success)
   - isExplosive                 boolean, 20+ yard pass or 10+ yard run
+  -- Advanced analytical fields (NEW — added after parquet spike):
+  - cpoe                        completion percentage over expected, nullable for non-pass plays
+  - xpass                       expected pass rate at this game situation
+  - passOverExpected            actual pass indicator minus xpass (parquet: pass_oe)
   -- Pass-specific:
   - passLength                  short / deep / nullable
   - airYards                    nullable
@@ -418,6 +452,10 @@ HISTORICAL SEASONS IN THE GATED APP
   - "View week 8 of 2022" mode
   - Historical data exists via backfill; gated app assumes current season
 
+VEGAS WIN PROBABILITY TRACKING
+  - vegas_wp and vegas_wpa fields available in parquet
+  - Could enable analysis of how the betting market reads in-game state
+
 ═══════════════════════════════════════════════════════════════
 DEFERRED TO v3+
 ═══════════════════════════════════════════════════════════════
@@ -456,6 +494,8 @@ KEY DESIGN PRINCIPLES BAKED IN
    - season, stadium, team, player are independent reference data
    - Stadiums separate from teams (handles neutral sites, relocations)
    - Player team membership separate from player (handles trades)
+   - Drives separate from plays (enables drive-level analytical queries
+     without forcing joins or denormalization)
    - Injuries separate from players (handles multiple injuries per season)
    - Injury status separate from injury (tracks weekly updates)
 
@@ -500,10 +540,13 @@ INDEXES TO ADD AT BUILD TIME
 - All foreign keys (Drizzle won't index these automatically)
 - game(seasonId, week) for weekly queries
 - game(gameDateTime) for time-ordered queries (streak, rest)
+- drive(gameId, driveNumber) UNIQUE constraint
+- drive(possessionTeamId, gameId) for team drive queries
 - playerGame(playerId, gameId) unique constraint
 - playerGame(playerId, gameId, opponentDefenseRankPass) for splits queries
 - playerGame(playerId, gameId, opponentDefenseRankRush) for splits queries
 - play(gameId) for game-level queries
+- play(driveId) for drive-level queries
 - play(possessionTeamId, gameId) for team queries
 - play(passerId), play(rusherId), play(receiverId) for player queries
 - teamWeekStats(teamId, seasonId, week) unique constraint
@@ -520,7 +563,11 @@ Weekly ingestion sequence after games complete (triggered Sunday/Monday/
 Thursday nights ~30min after final game ends — see ADR-0006):
 
 1. Update game records with final scores
-2. Insert play-by-play data into `play` table
+2. Process play-by-play parquet:
+   a. Extract unique drives per game and insert/upsert into `drive` table
+   b. Insert plays into `play` table with driveId FK references
+   -- Drive data is replicated on every play row in the parquet, so
+   -- deduplicate by (gameId, driveNumber) before drive inserts.
 3. Compute and update teamWeekStats:
    - EPA aggregates from plays
    - ELO recalculation (depends on prior week's ELO + this week's results)
@@ -558,6 +605,45 @@ One-time/rare (local Python scripts, not deployed):
 
 - Historical backfill (run from laptop, writes directly to Neon)
 - See scripts/backfill/ for nfl_data_py-based scripts
+
+═══════════════════════════════════════════════════════════════
+PARQUET FIELD MAPPING NOTES (from spike)
+═══════════════════════════════════════════════════════════════
+
+Notes from the parquet-in-Node spike (using hyparquet) confirming
+nflverse field mappings and quirks:
+
+PARQUET TYPE QUIRKS:
+- Dates and times are BYTE_ARRAY (STRING) — need parsing during ingestion:
+  - game_date format: "2025-09-07"
+  - time format: "02:00" (MM:SS in quarter)
+  - time_of_day format: ISO timestamp "2025-09-07T18:12:20.900Z"
+- Boolean-like flags stored as DOUBLE (0.0 / 1.0):
+  - pass, rush, complete_pass, interception, success, etc.
+  - Convert to actual booleans in TypeScript ingestion code
+- Weather is partially denormalized in source data:
+  - `weather` (STRING): free-text e.g. "Sunny Temp: 83° F, Humidity: 72%, Wind: NE 9 mph"
+  - `temp` (INT32): structured, nullable (always null for domes)
+  - `wind` (INT32): structured, nullable (always null for domes)
+  - Use the structured fields when populated; ignore free-text version
+- Score state distinction:
+  - `home_score` / `away_score`: FINAL score, replicated on every play row
+  - `total_home_score` / `total_away_score`: in-game score at time of play
+  - `posteam_score` / `defteam_score`: in-game score from possession-team perspective
+  - Use posteam_score / defteam_score for play.scoreOffense / scoreDefense
+
+KEY PARQUET → SCHEMA MAPPINGS:
+- parquet `success` (DOUBLE 0/1) → play.isSuccessful (boolean)
+- parquet `cpoe` → play.cpoe
+- parquet `xpass` → play.xpass
+- parquet `pass_oe` → play.passOverExpected
+- parquet `fixed_drive` → drive.driveNumber (use fixed_drive, not raw drive)
+- parquet `fixed_drive_result` → drive.result
+- parquet `drive_play_count` → drive.playCount
+- parquet `drive_time_of_possession` → drive.timeOfPossession
+- parquet `drive_first_downs` → drive.firstDowns
+- parquet `drive_inside20` (0/1) → drive.insideTwenty (boolean)
+- parquet `drive_ended_with_score` (0/1) → drive.endedWithScore (boolean)
 
 ═══════════════════════════════════════════════════════════════
 v1 SHIP CRITERIA (see ADR-0012)

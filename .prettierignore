@@ -1,0 +1,6 @@
+# Ignore files
+node_modules
+build
+coverage
+package-lock.json
+*.min.js
