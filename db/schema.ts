@@ -3,7 +3,7 @@
 // Sections below are pre-staged for the eventual per-domain file split
 // (docs/schema-design.md → Drizzle conventions → Schema file organisation).
 // When this file crosses ~250 lines or a domain hits a third table, mv this
-// file into src/db/schema/{reference,games,team-stats}.ts and re-export from
+// file into db/schema/{reference,games,team-stats}.ts and re-export from
 // schema/index.ts. Call-site imports `from "@/db/schema"` stay unchanged.
 
 import { relations, sql } from "drizzle-orm";

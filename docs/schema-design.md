@@ -1,6 +1,6 @@
 # Schema design
 
-**Drizzle is the source of truth.** This document captures the *why* behind the schema's shape — design rationale, recurring patterns, principles, and per-table notes that the Drizzle code can't express. Column types, indexes, and exact field names live in `src/db/schema.ts`. When Drizzle and this document conflict, Drizzle wins; update this document.
+**Drizzle is the source of truth.** This document captures the *why* behind the schema's shape — design rationale, recurring patterns, principles, and per-table notes that the Drizzle code can't express. Column types, indexes, and exact field names live in `db/schema.ts`. When Drizzle and this document conflict, Drizzle wins; update this document.
 
 For architectural decisions that warrant their own record, see `docs/adr/`. For the nflverse parquet → Postgres column mappings, see `docs/parquet-mapping.md`.
 
@@ -12,7 +12,7 @@ Three principles govern where information lives in the schema. Each is the disti
 
 **Derived state at read time** unless temporal-correctness, wrong-shape, or atomicity forces caching. Examples that compute live: current week (`getCurrentWeek(seasonId)` helper), ELO rank within league (`RANK() OVER`), win/loss streak, rest situation between games, hit margin on a prop. Examples that materialise at ingestion: per-game target / rush / air-yards shares, opponent defense rank at time of game, season-to-date totals (ADR-0011). The default is "compute at read time" — caching pays its cost in cascading writes and staleness risk, and earns its keep only when it solves something live computation can't.
 
-**DB stores analytical facts; TS stores presentation/brand.** Analytical team fields (`conference`, `division`, `abbreviation`) live in Postgres because they are queried in analytical contexts. Team brand assets (name, primary colour, secondary colour, logo path) live in `src/data/teams.ts` as a typed constant. Pure presentation has no place in the read-side analytical store — it adds bytes to every row read, requires migrations to update, and answers no analytical question.
+**DB stores analytical facts; TS stores presentation/brand.** Analytical team fields (`conference`, `division`, `abbreviation`) live in Postgres because they are queried in analytical contexts. Team brand assets (name, primary colour, secondary colour, logo path) live in `data/teams.ts` as a typed constant. Pure presentation has no place in the read-side analytical store — it adds bytes to every row read, requires migrations to update, and answers no analytical question.
 
 ## Recurring patterns
 
@@ -27,6 +27,7 @@ Three principles govern where information lives in the schema. Each is the disti
 **Naming**:
 - TS-side property names in camelCase (`homeTeamId`, `expectedPointsBefore`).
 - Postgres column names in snake_case via `casing: 'snake_case'` in `drizzle.config.ts`. Per-column overrides only for acronyms preserving capitalisation or for matching a specific source-system identifier name.
+- **The same `casing: "snake_case"` MUST also be passed to the runtime `drizzle(pool, { schema, casing: "snake_case" })` call** — `drizzle.config.ts`'s casing affects only `drizzle-kit generate`; the runtime client uses its own casing to map property names to columns at query time. Forget the runtime arg and every insert/update fails with "column does not exist." Apply at every `drizzle()` call site (`db/index.ts`, `db/seed.ts`, any future standalone scripts).
 
 **Primary keys and idempotency**:
 - Surrogate `bigserial` PKs on every table. One mental model across the schema.
@@ -43,7 +44,7 @@ Three principles govern where information lives in the schema. Each is the disti
 - Strings: `text` everywhere. `varchar(n)` is legacy and functionally identical. Use CHECK constraints when actual length validation matters.
 
 **Schema file organisation**:
-- Single `src/db/schema.ts` until either it crosses ~250 lines or a domain hits a third table. At that point, cut over to `src/db/schema/{reference,games,player-perf,team-stats,props,odds,injuries,infra}.ts`. Call-site imports stay `import { ... } from "@/db/schema"` either way — the cutover renames the file into a folder with an index re-export, no consumer code touched.
+- Single `db/schema.ts` until either it crosses ~250 lines or a domain hits a third table. At that point, cut over to `db/schema/{reference,games,player-perf,team-stats,props,odds,injuries,infra}.ts`. Call-site imports stay `import { ... } from "@/db/schema"` either way — the cutover renames the file into a folder with an index re-export, no consumer code touched.
 - Section dividers in the single-file version pre-stage the eventual domain split so the cutover is mechanical.
 - Drizzle `relations()` declarations co-located with their tables, never split into a separate `relations.ts`. The FK declaration and the relation declaration describe the same edge and want to be read together.
 
@@ -73,9 +74,9 @@ Three principles govern where information lives in the schema. Each is the disti
 
 **`season`** — Immutable facts about a season's existence: `(id, year, startDate, endDate)`. `currentWeek` and `isComplete` are not stored — both are derived state computed via `getCurrentWeek(seasonId)` (data placement principle #2).
 
-**`team`** — Analytical fields only: `(id, abbreviation, conference, division, homeStadiumId)`. Brand assets (name, colours, logo) live in `src/data/teams.ts`. `homeStadiumId` and `stadium.homeTeamId` form a circular FK to be resolved when `stadium`'s slice lands.
+**`team`** — Analytical fields only: `(id, abbreviation, conference, division)`. Brand assets (name, colours, logo) live in `data/teams.ts`. A `homeStadiumId` FK was considered for v1 but dropped per YAGNI — the column had no read path and no FK target (stadium ships in a future slice). When stadium lands, `team.homeStadiumId` and `game.stadiumId` get added as nullable FKs via an `ALTER TABLE` migration; the `team.homeStadiumId`↔`stadium.homeTeamId` circular FK gets resolved then by picking one canonical direction.
 
-**`stadium`** — Separated from `team` to handle neutral-site games (international, Super Bowl, weather relocations). `homeTeamId` is nullable for neutral-site-only venues. Lands in a future slice; `team.homeStadiumId` is nullable until then.
+**`stadium`** — Separated from `team` to handle neutral-site games (international, Super Bowl, weather relocations). `homeTeamId` is nullable for neutral-site-only venues. Lands in a future slice; `team` and `game` gain stadium FKs at that point.
 
 **`player`** — Attributes that don't change frequently (name, position, jersey number, height/weight, DOB, rookie year, headshot). Team affiliation tracked separately via `playerTeamMembership` to handle mid-season trades. `gsisId` UNIQUE NOT NULL serves as ingestion idempotency key.
 

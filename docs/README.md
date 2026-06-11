@@ -2,7 +2,7 @@
 
 This project uses several documents with distinct, non-overlapping roles:
 
-- `src/db/schema.ts` — the schema as it actually IS. Drizzle TS code is
+- `db/schema.ts` — the schema as it actually IS. Drizzle TS code is
   the canonical implementation reference.
 - `docs/schema-design.md` — why the schema is shaped this way. Design
   rationale and cross-references to ADRs.

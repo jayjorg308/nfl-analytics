@@ -60,4 +60,4 @@ Drive data is replicated on every play row in the parquet. Ingestion deduplicate
 | `defteam_score`       | `play.scoreDefense`            |
 | `ep`                  | `play.expectedPointsBefore`    |
 
-Additional play-level mappings will be added as ingestion lands per slice. This document is the source of truth for parquet → Postgres column correspondence; the schema's `play` table declares the destination columns in `src/db/schema.ts`.
+Additional play-level mappings will be added as ingestion lands per slice. This document is the source of truth for parquet → Postgres column correspondence; the schema's `play` table declares the destination columns in `db/schema.ts`.
