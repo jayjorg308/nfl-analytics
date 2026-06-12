@@ -2,6 +2,8 @@
 
 This project uses several documents with distinct, non-overlapping roles:
 
+- `CLAUDE.md` — agent operating instructions, working principles,
+  current build state.
 - `db/schema.ts` — the schema as it actually IS. Drizzle TS code is
   the canonical implementation reference.
 - `docs/schema-design.md` — why the schema is shaped this way. Design
@@ -14,3 +16,16 @@ This project uses several documents with distinct, non-overlapping roles:
 When in doubt: implementation questions go to Drizzle, "why" questions
 go to schema-design.md or the ADRs, source-system questions go to
 parquet-mapping.md, vocabulary questions go to CONTEXT.md.
+
+## Operational scripts
+
+Standalone scripts under `scripts/` for one-off operations:
+
+- `scripts/verify-schema.mjs` — confirms live DB shape (tables, enums,
+  indexes). Run after migrations.
+- `scripts/verify-view.mjs` — confirms the week_summary view exists
+  and has expected columns. Run after view migrations.
+- `scripts/verify-seed.mjs` — confirms the seed produced realistic
+  dashboard data. Run after `npm run db:seed`.
+
+(More will land as the project grows.)

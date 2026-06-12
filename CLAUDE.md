@@ -6,6 +6,16 @@ When making architectural or design decisions on this project, first check `docs
 
 When a new architectural decision is made during implementation, draft an ADR following the format of the existing ones in `docs/adr/` before considering the work complete.
 
+## Project state
+
+NFL analytics project, building toward v1 ship per ADR-0010's slice sequence:
+
+- ✅ Slice 1 complete and deployed to Vercel (schema, weekSummary view, hand-seeded data, three-tier Clerk auth, Slate Dashboard skeleton)
+- 🚧 Slice 3 next: real ingestion (parquet-in-Node weekly + Python historical backfill for ELO grounding per ADR-0004 and ADR-0008)
+- Slices 4-7 follow per ADR-0010 (Odds API, Game Detail, Player, Props, Team, Team Leaderboard pages)
+
+When starting a fresh session, read `CONTEXT.md` and `docs/README.md` first to load the project's domain language and documentation map.
+
 ## Agent skills
 
 ### Issue tracker
