@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import nfl_data_py as nfl
@@ -231,6 +232,14 @@ def main() -> None:
     parser.add_argument("--cleanup-2024", action="store_true",
                         help="Run the one-shot pre-3a hand-seed 2024 DELETE first (ADR-0015).")
     args = parser.parse_args()
+
+    if not args.dry_run:
+        # Print the write target up front (host only, no credentials) so the
+        # operator confirms dev-vs-prod BEFORE the long pull, not after the write.
+        # Inline DATABASE_URL overrides .env.local (python-dotenv override=False).
+        target = urlsplit(load_database_url())
+        print(f"LIVE WRITE TARGET -> {target.hostname}{target.path}")
+        print("  (set DATABASE_URL inline to override .env.local; Ctrl-C now if this is wrong)\n")
 
     sched = nfl.import_schedules(BACKFILL_SEASONS)
     sched = sched[sched["home_score"].notna() & sched["away_score"].notna()].copy()
