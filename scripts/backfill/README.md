@@ -35,6 +35,7 @@ uv run verify_columns.py [year]  # reader-equivalence: fastparquet vs the spike'
                                  # documented column semantics (parquet-mapping.md)
 uv run aggregate.py [year]       # EPA aggregation sanity check (ADR-0020)
 uv run verify_playoff_weeks.py   # playoff week numbering across 2021-2025
+uv run verify_home_field.py      # modal-stadium HFA derivation + 2026 baseline diff
 uv run elo.py                    # ELO chain validation (ADR-0014/0021/0022)
 ```
 

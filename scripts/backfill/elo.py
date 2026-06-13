@@ -15,9 +15,14 @@ boundary regress every team's last-played-game ELO 1/3 of the way toward 1500.
 Three ADR-0014 *application* points are resolved here and flagged inline,
 pending confirmation (the tie case needs a 0014 amendment):
 
-  [HFA-NEUTRAL] Neutral-site games (Super Bowl, international) use HFA = 0.
-      ADR-0014 sets home-field at 50 rating points; a neutral site has no home
-      field. The schedule's `location` column drives this.
+  [HFA-NEUTRAL] Home-field (HFA = 50) applies only when the game is at the home
+      team's modal home stadium; neutral sites (Super Bowl, international,
+      relocations) get HFA = 0. This is DERIVED from the venue, not read from the
+      schedule's `location` flag, because `location` proved unreliable for 2025
+      (7 games flagged Neutral while at the home team's own stadium). The modal
+      derivation is correct under either reading of that anomaly, and `is_neutral`
+      here is the SAME source game.isNeutralSite will use, so they never disagree.
+      See ADR-0022 and verify_home_field.py.
 
   [MOV-HFA] The MOV autocorrelation term's `winner_elo_diff` uses the
       home-field-ADJUSTED game ratings (winner game-Elo minus loser game-Elo).
@@ -101,6 +106,29 @@ def update_game(home_elo: float, away_elo: float, home_score: int,
     return new_home, new_away, trace
 
 
+def _venue_col(sched: pd.DataFrame) -> str:
+    """Prefer the stable `stadium_id` over the renameable `stadium` name."""
+    return "stadium_id" if "stadium_id" in sched.columns else "stadium"
+
+
+def home_stadium_map(sched: pd.DataFrame) -> dict[str, str]:
+    """Each team's modal home venue across all its home games - robust to the
+    handful of international / relocated 'home' games and to an unreliable
+    `location` flag."""
+    col = _venue_col(sched)
+    return sched.groupby("home_team")[col].agg(lambda s: s.mode().iloc[0]).to_dict()
+
+
+def mark_neutral(sched: pd.DataFrame) -> pd.DataFrame:
+    """Add `is_neutral`: True when the venue is NOT the home team's modal home
+    stadium. HFA and game.isNeutralSite both derive from this single source."""
+    col = _venue_col(sched)
+    modal = home_stadium_map(sched)
+    s = sched.copy()
+    s["is_neutral"] = s[col].ne(s["home_team"].map(modal))
+    return s
+
+
 def _regress(elos: dict[str, float]) -> dict[str, float]:
     """Regress each team 1/3 of the way toward 1500 (ADR-0014 inter-season)."""
     return {t: BASE_ELO + (e - BASE_ELO) * (1.0 - REGRESSION_FRACTION)
@@ -138,7 +166,7 @@ def run_chain(sched: pd.DataFrame, trace_ids: set[str] | None = None
             for g in s[s["week"] == wk].itertuples(index=False):
                 nh, na, tr = update_game(elos[g.home_team], elos[g.away_team],
                                           int(g.home_score), int(g.away_score),
-                                          g.location != "Home")
+                                          g.is_neutral)
                 elos[g.home_team], elos[g.away_team] = nh, na
                 if g.game_id in trace_ids:
                     traces.append({"game_id": g.game_id, "season": season, "week": wk,
@@ -163,7 +191,7 @@ def run_chain(sched: pd.DataFrame, trace_ids: set[str] | None = None
             for g in post[post["week"] == wk].itertuples(index=False):
                 nh, na, tr = update_game(elos[g.home_team], elos[g.away_team],
                                           int(g.home_score), int(g.away_score),
-                                          g.location != "Home")
+                                          g.is_neutral)
                 elos[g.home_team], elos[g.away_team] = nh, na
                 if g.game_id in trace_ids:
                     traces.append({"game_id": g.game_id, "season": season, "week": wk,
@@ -195,6 +223,7 @@ def _rule(title: str) -> None:
 def main() -> None:
     sched = nfl.import_schedules(SEASONS)
     sched = sched[sched["home_score"].notna() & sched["away_score"].notna()].copy()
+    sched = mark_neutral(sched)  # HFA derives from modal home stadium, not `location`
 
     # Pick 3 games to expose the arithmetic (ADR-0012 #4 hand-verification):
     # first 2021 game (cold start, both 1500), a mid-chain game, the 2024 SB.

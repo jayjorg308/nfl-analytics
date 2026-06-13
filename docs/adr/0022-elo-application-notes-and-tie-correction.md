@@ -68,6 +68,26 @@ confirms international games are correctly labeled `Neutral` rather than mislabe
 as home (which would have applied erroneous HFA); the lone neutral wild-card game
 confirms the rule already covers a neutral-site playoff case, not just the SB.
 
+## 4. Home-field derives from the modal home stadium, not `location`
+
+Point 3 above assumed the schedule's `location` flag is authoritative. Chunk 4 prep
+showed it is not for 2025: seven 2025 regular-season games are flagged
+`location='Neutral'` while played at the home team's **own** stadium (KC@LAC at SoFi,
+DEN@NYJ at MetLife, WAS@MIA at Hard Rock, …). Whether `location` or `stadium` is the
+wrong field cannot be settled from the data, so home-field is instead **derived from
+the venue**: HFA = 50 applies iff the game is at the home team's modal home stadium
+(by the stable `stadium_id`), and the game is neutral (HFA = 0) otherwise. This is
+correct under either reading of the anomaly, and `game.isNeutralSite` derives from
+the *same* computation, so the two never disagree.
+
+The derivation was validated against `location` across all five seasons (see
+`verify_home_field.py`): it agrees **exactly** for 2021-2024 (the verified-real
+international games and relocations) and disagrees **only** on the seven 2025 games —
+confirming the method is sound and 2025 is the lone anomaly. Re-running the chain with
+venue-derived HFA versus the `location` flag moved the 2026 Week-0 baseline by at most
+**1.8 ELO with no change to ordering**, so the correction is immaterial; the robust
+derivation lands because it is correct, not because the numbers demanded it.
+
 ## Cross-references
 
 - ADR-0014 — the methodology this amends (original body preserved there).
