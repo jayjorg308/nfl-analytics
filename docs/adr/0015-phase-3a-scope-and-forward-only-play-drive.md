@@ -33,6 +33,8 @@ DELETE FROM game WHERE season_id IN (SELECT id FROM season WHERE year = 2024);
 DELETE FROM season WHERE year = 2024;
 ```
 
+**[Backup *sequencing* amended by ADR-0024: backup-FIRST, before the cleanup, capturing the validated Slice 1 state. The post-cleanup state is empty (Slice 1 seeded only 2024), so the "ready for Phase 3a" target below is an empty DB; build.py's idempotency also removes the clean-start rationale. The reasoning below is preserved for history.]**
+
 The named Neon backup branch (see "Prod-safety three-layer defense" below) is taken **after** this cleanup, so the backup captures the "ready for Phase 3a" state — restoration returns to a clean pre-backfill state, not to the Slice 1 final state. (If the operator ever needs to restore beyond Phase 3a back to Slice 1 final, that's a different concern requiring a different branch from Slice 1's deployment time.)
 
 ## Prod-safety three-layer defense

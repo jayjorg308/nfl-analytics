@@ -423,11 +423,14 @@ def _write(tws, game_rows, season_rows, cleanup_2024: bool) -> None:
     pool = make_pool(load_database_url())
     try:
         with pool.connection() as conn:
-            if cleanup_2024:
-                with conn.transaction(), conn.cursor() as cur:
-                    cur.execute(CLEANUP_2024_ONE_SHOT)
-                print("  ran one-shot 2024 hand-seed cleanup (ADR-0015)")
             with conn.transaction(), conn.cursor() as cur:
+                if cleanup_2024:
+                    # In the SAME transaction as the write: cleanup + reload are
+                    # atomic, so a write failure leaves prod at its prior (Slice 1)
+                    # state rather than the empty post-cleanup state. The named
+                    # backup branch is taken BEFORE this runs (ADR-0024).
+                    cur.execute(CLEANUP_2024_ONE_SHOT)
+                    print("  ran one-shot 2024 hand-seed cleanup (ADR-0015), in-transaction")
                 cur.executemany(
                     "INSERT INTO season (year, start_date, end_date) VALUES (%s, %s, %s) "
                     "ON CONFLICT (year) DO NOTHING",
