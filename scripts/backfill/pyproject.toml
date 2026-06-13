@@ -1,0 +1,16 @@
+[project]
+name = "nfl-backfill"
+version = "0.1.0"
+description = "Phase 3a historical backfill (local one-shot) for NFL analytics. See docs/adr/0008, 0014, 0015."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "nfl-data-py>=0.3.2",
+    "pandas>=2.1",
+    "psycopg[binary,pool]>=3.2",
+    "python-dotenv>=1.0",
+]
+
+# Not an installable package — just a script project. uv installs the
+# dependencies into .venv but does not try to build/install this project.
+[tool.uv]
+package = false
