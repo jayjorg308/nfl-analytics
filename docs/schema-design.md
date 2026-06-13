@@ -88,7 +88,7 @@ Three principles govern where information lives in the schema. Each is the disti
 
 **`drive`** — Top-level table extracted from per-play drive context replicated in the parquet. See ADR-0013 for the modelling decision. UNIQUE on `(gameId, driveNumber)` enforces post-deduplication uniqueness.
 
-**`play`** — The foundation for EPA, advanced metrics, and ad-hoc research queries. References `driveId`. EPA fields ingested from nflfastR pre-computed values per ADR-0003 — building a custom EPA model is a v2 research investigation, not a v1 dependency.
+**`play`** — The foundation for EPA, advanced metrics, and ad-hoc research queries. References `driveId`. EPA fields ingested from nflfastR pre-computed values per ADR-0003 — building a custom EPA model is a v2 research investigation, not a v1 dependency. Which source columns earn a Postgres column is governed by ADR-0018 (column-inclusion principle); the concrete parquet → Postgres mapping lives in `docs/parquet-mapping.md` and finalises when Phase 3b builds the table (forward-only per ADR-0015).
 
 ### Player performance
 

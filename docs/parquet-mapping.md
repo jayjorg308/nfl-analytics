@@ -60,4 +60,4 @@ Drive data is replicated on every play row in the parquet. Ingestion deduplicate
 | `defteam_score`       | `play.scoreDefense`            |
 | `ep`                  | `play.expectedPointsBefore`    |
 
-Additional play-level mappings will be added as ingestion lands per slice. This document is the source of truth for parquet → Postgres column correspondence; the schema's `play` table declares the destination columns in `db/schema.ts`.
+Additional play-level mappings will be added as ingestion lands per slice. **ADR-0018 is the governing principle for *which* play columns earn a Postgres column** (the Descriptor / Volatility tests and the Excluded list); this document is its *application* — the source of truth for *how* each captured column maps parquet → Postgres — and the concrete play column list finalises when Phase 3b builds the table (forward-only per ADR-0015). The schema's `play` table declares the destination columns in `db/schema.ts`.
