@@ -34,6 +34,8 @@ Development / verification scripts (no DB writes):
 uv run verify_columns.py [year]  # reader-equivalence: fastparquet vs the spike's
                                  # documented column semantics (parquet-mapping.md)
 uv run aggregate.py [year]       # EPA aggregation sanity check (ADR-0020)
+uv run verify_playoff_weeks.py   # playoff week numbering across 2021-2025
+uv run elo.py                    # ELO chain validation (ADR-0014/0021/0022)
 ```
 
 ## Status
@@ -45,11 +47,17 @@ uv run aggregate.py [year]       # EPA aggregation sanity check (ADR-0020)
   dev check confirming fastparquet (Python) agrees with the spike's
   hyparquet-documented column semantics — the reader-equivalence that justifies
   building on fastparquet, and worth re-running against future `nfl_data_py` versions.
-- **Chunks 3-4 (ELO chain, DB write + idempotency)** — pending.
+- **Chunk 3 (ELO chain)** — done. `elo.py` computes the 2021-2025 ELO chain +
+  2026 Week-0 baseline per ADR-0014, writing playoff-week rows per ADR-0021;
+  application notes + the tie-handling correction are in ADR-0022.
+  `verify_playoff_weeks.py` is a re-runnable cross-season playoff-week check.
+- **Chunk 4 (DB write + idempotency)** — pending.
 
 ## References
 
 - `docs/adr/0008` — ingestion runtime and Python boundary
 - `docs/adr/0014` — v1 ELO methodology (consolidated)
 - `docs/adr/0015` — Phase 3a scope, idempotency, prod-safety
-- `docs/adr/0020` — EPA aggregation methodology (this chunk's decisions)
+- `docs/adr/0020` — EPA aggregation methodology
+- `docs/adr/0021` — playoff `teamWeekStats` representation (ragged shape)
+- `docs/adr/0022` — ELO application notes + tie-handling correction (amends 0014)
