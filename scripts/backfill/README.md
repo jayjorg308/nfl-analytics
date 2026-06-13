@@ -28,14 +28,28 @@ uv run backfill.py --dry-run     # connect + (later) pull/aggregate, no writes
 uv run backfill.py               # full run (writes)
 ```
 
+Development / verification scripts (no DB writes):
+
+```sh
+uv run verify_columns.py [year]  # reader-equivalence: fastparquet vs the spike's
+                                 # documented column semantics (parquet-mapping.md)
+uv run aggregate.py [year]       # EPA aggregation sanity check (ADR-0020)
+```
+
 ## Status
 
-Chunk 1 (scaffolding) is complete: the skeleton loads env, opens a pooled
-connection to Neon, verifies connectivity, and exits. Parquet pull, EPA
-aggregation, the ELO chain, and DB writes land in Chunks 2-4.
+- **Chunk 1 (scaffolding)** — done. `backfill.py` loads env, opens a pooled Neon
+  connection, verifies connectivity, exits.
+- **Chunk 2 (parquet pull + EPA aggregation)** — done. `aggregate.py` computes
+  season-to-date team-week EPA per ADR-0020. `verify_columns.py` is a re-runnable
+  dev check confirming fastparquet (Python) agrees with the spike's
+  hyparquet-documented column semantics — the reader-equivalence that justifies
+  building on fastparquet, and worth re-running against future `nfl_data_py` versions.
+- **Chunks 3-4 (ELO chain, DB write + idempotency)** — pending.
 
 ## References
 
 - `docs/adr/0008` — ingestion runtime and Python boundary
 - `docs/adr/0014` — v1 ELO methodology (consolidated)
 - `docs/adr/0015` — Phase 3a scope, idempotency, prod-safety
+- `docs/adr/0020` — EPA aggregation methodology (this chunk's decisions)
