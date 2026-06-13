@@ -28,7 +28,7 @@ def main() -> None:
     sched = nfl.import_schedules(SEASONS)
     sched = sched[sched["home_score"].notna() & sched["away_score"].notna()].copy()
     sched = mark_neutral(sched)
-    rows, _ = run_chain(sched)
+    rows, _, _ = run_chain(sched)
     week0 = rows[rows["week"] == 0]  # seasons 2021-2026
 
     for season in (2024, 2026):

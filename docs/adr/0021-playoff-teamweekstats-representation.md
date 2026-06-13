@@ -11,12 +11,29 @@ regression), ADR-0020 (EPA is regular-season-only), ADR-0009 + `schema-design.md
 ## The decision
 
 The v1 slate dashboard is **live during playoff weekends**, so each playoff round
-gets `teamWeekStats` rows. Each playoff row is **EPA-frozen, ELO-advancing**: the
-EPA columns carry forward the team's week-18 (end-of-regular-season) value, and the
-ELO columns advance with the playoff results. This is semantically exactly right —
-a divisional-round card shows regular-season-comparable EPA (the comparable measure,
-per ADR-0020) alongside playoff-inclusive ELO (a game-outcome rating that should
-reflect January wins, per ADR-0014).
+gets `teamWeekStats` rows. The column treatment is **three-way** — each column does
+the right thing for the *kind* of quantity it is:
+
+- **Frozen at week 18** — the seven EPA columns, the six traditional per-game
+  aggregates, and `sosRank`. These are regular-season **rates / efficiencies**,
+  comparable across teams only when restricted to the regular season; advancing them
+  through the playoffs reintroduces the variable-playoff-game-count comparability
+  problem that REG-only EPA (ADR-0020) and SOS (ADR-0023) exist to avoid.
+- **Advancing as a count** — `recordWins` / `recordLosses` / `recordTies`. A win is a
+  win: playoff wins are counted identically to regular-season wins, there is no rate
+  or denominator and so no comparability or small-sample problem. A divisional card
+  showing "13-4" for a team that won its wild-card game (and is actually 14-4) would
+  be a **stale count**, not a comparable-but-different measure — it would read as a
+  bug to anyone who knows the result. Record is most *accurate* when current, exactly
+  where the rates are most *comparable* when frozen; each column doing the right thing
+  for what it is is coherent, not inconsistent. (NFL playoff games cannot tie, so the
+  playoff record cumulation only ever increments W or L.)
+- **Advancing as a rating** — `eloRating` / `eloChange`. ELO is the one measure
+  ADR-0014 defines as playoff-inclusive (a game-outcome rating that should reflect
+  January wins).
+
+So a conference-championship card shows a current win-count alongside frozen
+efficiency rates alongside a playoff-updated rating — each correct for what it is.
 
 ## Why: the rendering coupling
 

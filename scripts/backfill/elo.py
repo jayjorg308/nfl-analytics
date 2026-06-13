@@ -136,17 +136,20 @@ def _regress(elos: dict[str, float]) -> dict[str, float]:
 
 
 def run_chain(sched: pd.DataFrame, trace_ids: set[str] | None = None
-              ) -> tuple[pd.DataFrame, list[dict]]:
-    """Iterate the full chain. Returns (elo_rows, traces).
+              ) -> tuple[pd.DataFrame, list[dict], pd.DataFrame]:
+    """Iterate the full chain. Returns (elo_rows, traces, games).
 
-    elo_rows: one row per (season, team, week) with eloRating + eloChange, for
-    seasons 2021-2025 (weeks 0-18 + ragged playoff weeks) and 2026 week 0.
+    elo_rows : one row per (season, team, week) with eloRating + eloChange, for
+        seasons 2021-2025 (weeks 0-18 + ragged playoff weeks) and 2026 week 0.
+    games    : one row per game with both teams' pre-game ELO (home_pre/away_pre),
+        used downstream for realized point-in-time SOS (ADR-0023).
     """
     trace_ids = trace_ids or set()
     teams = sorted(set(sched["home_team"]) | set(sched["away_team"]))
     elos = {t: BASE_ELO for t in teams}     # 2021 Week 0 cold start
     rows: list[dict] = []
     traces: list[dict] = []
+    games: list[dict] = []
 
     def emit(season: int, team: str, week: int, change: float) -> None:
         rows.append({"season": season, "team": team, "week": week,
@@ -156,6 +159,22 @@ def run_chain(sched: pd.DataFrame, trace_ids: set[str] | None = None
         for t in teams:
             emit(season, t, 0, 0.0)
 
+    def play(g, season: int, wk: int) -> None:
+        eh, ea = elos[g.home_team], elos[g.away_team]  # pre-game ELOs
+        nh, na, tr = update_game(eh, ea, int(g.home_score), int(g.away_score),
+                                 g.is_neutral)
+        elos[g.home_team], elos[g.away_team] = nh, na
+        games.append({"season": season, "week": wk, "game_id": g.game_id,
+                      "home_team": g.home_team, "away_team": g.away_team,
+                      "home_pre": eh, "away_pre": ea,
+                      "home_score": int(g.home_score), "away_score": int(g.away_score)})
+        if g.game_id in trace_ids:
+            traces.append({"game_id": g.game_id, "season": season, "week": wk,
+                           "home": g.home_team, "away": g.away_team,
+                           "home_score": int(g.home_score),
+                           "away_score": int(g.away_score),
+                           "pre_home": eh if wk == 1 else None, **tr})
+
     for season in SEASONS:
         s = sched[sched["season"] == season].sort_values(["week", "game_id"])
         emit_week0(season)
@@ -164,17 +183,7 @@ def run_chain(sched: pd.DataFrame, trace_ids: set[str] | None = None
         # Regular season: every team gets a row (played -> game delta; bye -> 0).
         for wk in REG_WEEKS:
             for g in s[s["week"] == wk].itertuples(index=False):
-                nh, na, tr = update_game(elos[g.home_team], elos[g.away_team],
-                                          int(g.home_score), int(g.away_score),
-                                          g.is_neutral)
-                elos[g.home_team], elos[g.away_team] = nh, na
-                if g.game_id in trace_ids:
-                    traces.append({"game_id": g.game_id, "season": season, "week": wk,
-                                   "home": g.home_team, "away": g.away_team,
-                                   "home_score": int(g.home_score),
-                                   "away_score": int(g.away_score),
-                                   "pre_home": prev[g.home_team] if wk == 1 else None,
-                                   **tr})
+                play(g, season, wk)
             for t in teams:
                 emit(season, t, wk, elos[t] - prev[t])
             prev = dict(elos)
@@ -189,16 +198,7 @@ def run_chain(sched: pd.DataFrame, trace_ids: set[str] | None = None
         byes = played[20] - played[19]      # in divisional but not wild card
         for wk in PLAYOFF_WEEKS:
             for g in post[post["week"] == wk].itertuples(index=False):
-                nh, na, tr = update_game(elos[g.home_team], elos[g.away_team],
-                                          int(g.home_score), int(g.away_score),
-                                          g.is_neutral)
-                elos[g.home_team], elos[g.away_team] = nh, na
-                if g.game_id in trace_ids:
-                    traces.append({"game_id": g.game_id, "season": season, "week": wk,
-                                   "home": g.home_team, "away": g.away_team,
-                                   "home_score": int(g.home_score),
-                                   "away_score": int(g.away_score),
-                                   "pre_home": None, **tr})
+                play(g, season, wk)
             emit_teams = set(played[wk])
             if wk == 19:
                 emit_teams |= byes          # carry-forward (change == 0)
@@ -209,7 +209,7 @@ def run_chain(sched: pd.DataFrame, trace_ids: set[str] | None = None
         elos = _regress(elos)               # boundary -> next season's Week 0
 
     emit_week0(2026)                        # terminal baseline Phase 3b consumes
-    return pd.DataFrame(rows), traces
+    return pd.DataFrame(rows), traces, pd.DataFrame(games)
 
 
 # --------------------------------------------------------------------------
@@ -233,7 +233,7 @@ def main() -> None:
         .sort_values("game_id").iloc[0]
     trace_ids = {g_first["game_id"], g_sb["game_id"], g_mid["game_id"]}
 
-    rows, traces = run_chain(sched, trace_ids=trace_ids)
+    rows, traces, _ = run_chain(sched, trace_ids=trace_ids)
     print(f"pandas={pd.__version__}  elo rows={len(rows):,}")
 
     _rule("HAND-VERIFY 3 GAMES (ADR-0012 #4) - components for manual check")
