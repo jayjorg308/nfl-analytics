@@ -36,6 +36,10 @@ A directional comparison between an offense and a defense in a specific phase (p
 **Splits**:
 The standard set of cuts applied to a stat: Season, L3, L5, Home, Away. Player and team views render stats across these splits by default.
 
+**Strength of schedule (SOS)**:
+A team's schedule difficulty, surfaced as a 1–32 rank where **1 = hardest** — the rank inverts the naive reading, so guard against displaying it backwards. Measured by the average ELO of opponents. Two measures share the `sosRank` column: the in-season value is *realized* (opponents already played, each at its rating when that game happened); the week-0 value is *projected* (the full scheduled slate, each opponent at its preseason baseline rating), because no games have been played yet. See ADR-0023.
+_Avoid_: assuming 1 = easiest; conflating the projected week-0 value with the realized in-season one.
+
 **L3 / L5**:
 Shorthand for "last 3 games" / "last 5 games" played by a player or team. "L3 yds/game" = average yards per game over the last 3 games played.
 

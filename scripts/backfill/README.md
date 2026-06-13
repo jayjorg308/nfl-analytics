@@ -36,6 +36,7 @@ uv run verify_columns.py [year]  # reader-equivalence: fastparquet vs the spike'
 uv run aggregate.py [year]       # EPA aggregation sanity check (ADR-0020)
 uv run verify_playoff_weeks.py   # playoff week numbering across 2021-2025
 uv run verify_home_field.py      # modal-stadium HFA derivation + 2026 baseline diff
+uv run verify_sos_week0.py       # projected week-0 SOS mechanics (ADR-0023)
 uv run elo.py                    # ELO chain validation (ADR-0014/0021/0022)
 ```
 
@@ -62,3 +63,4 @@ uv run elo.py                    # ELO chain validation (ADR-0014/0021/0022)
 - `docs/adr/0020` — EPA aggregation methodology
 - `docs/adr/0021` — playoff `teamWeekStats` representation (ragged shape)
 - `docs/adr/0022` — ELO application notes + tie-handling correction (amends 0014)
+- `docs/adr/0023` — strength-of-schedule (sosRank) methodology
