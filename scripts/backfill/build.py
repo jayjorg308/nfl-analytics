@@ -30,6 +30,7 @@ import nfl_data_py as nfl
 import pandas as pd
 
 from aggregate import EPA_COLUMNS, aggregate_team_week_epa
+from backfill import load_database_url, make_pool
 from elo import SEASONS, home_stadium_map, mark_neutral, run_chain
 from sos import projected_week0_sos
 
@@ -227,6 +228,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="build")
     parser.add_argument("--dry-run", action="store_true",
                         help="Assemble and report; execute no DB mutations.")
+    parser.add_argument("--cleanup-2024", action="store_true",
+                        help="Run the one-shot pre-3a hand-seed 2024 DELETE first (ADR-0015).")
     args = parser.parse_args()
 
     sched = nfl.import_schedules(BACKFILL_SEASONS)
@@ -256,10 +259,24 @@ def main() -> None:
     tws = assemble_team_week_stats(elo_rows, epa, realized_sos, traditional, record, projected)
     game_rows = build_game_rows(sched)
 
+    # season rows: start/end from each season's first/last scheduled game.
+    def _dates(frame):
+        d = pd.to_datetime(frame["gameday"])
+        return d.min().date(), d.max().date()
+    srows = []
+    for y in BACKFILL_SEASONS:
+        sd, ed = _dates(sched[sched["season"] == y])
+        srows.append({"year": y, "startDate": sd, "endDate": ed})
+    sd, ed = _dates(sched_2026)
+    srows.append({"year": 2026, "startDate": sd, "endDate": ed})
+    season_rows = pd.DataFrame(srows)
+
     _report(args, sched, elo_rows, tws, game_rows)
 
     if not args.dry_run:
-        _write(tws, game_rows, sched)
+        _rule("WRITING (one transaction, ADR-0015)")
+        _write(tws, game_rows, season_rows, args.cleanup_2024)
+        print("  done.")
 
 
 def _rule(t: str) -> None:
@@ -341,8 +358,99 @@ def _report(args, sched, elo_rows, tws, game_rows) -> None:
         _rule("DRY RUN COMPLETE - no rows written")
 
 
-def _write(tws, game_rows, sched) -> None:
-    raise SystemExit("Live write not enabled in this review build - dry-run only for Chunk 4 review.")
+GAME_COLUMNS = [
+    "season_id", "week", "game_type", "home_team_id", "away_team_id", "game_date_time",
+    "is_neutral_site", "is_international", "home_score", "away_score", "status",
+    "nflverse_game_id",
+]
+TWS_COLUMNS = [
+    "team_id", "season_id", "week",
+    "overall_epa_per_play", "offensive_epa_per_play", "defensive_epa_per_play",
+    "offensive_pass_epa_per_play", "offensive_rush_epa_per_play",
+    "defensive_pass_epa_per_play", "defensive_rush_epa_per_play",
+    "elo_rating", "elo_change", "sos_rank",
+    "record_wins", "record_losses", "record_ties",
+    "points_scored_per_game", "pass_yards_per_game", "rush_yards_per_game",
+    "points_allowed_per_game", "pass_yards_allowed_per_game", "rush_yards_allowed_per_game",
+]
+
+
+def _game_tuples(game_rows, team_id, season_id):
+    """Native-Python tuples (psycopg does not adapt numpy/Timestamp types)."""
+    out = []
+    for r in game_rows.itertuples(index=False):
+        out.append((
+            season_id[int(r.year)], int(r.week), str(r.gameType),
+            team_id[r.homeAbbr], team_id[r.awayAbbr],
+            pd.Timestamp(r.gameDateTime).to_pydatetime(),
+            bool(r.isNeutralSite), bool(r.isInternational),
+            int(r.homeScore), int(r.awayScore), str(r.status), str(r.nflverseGameId),
+        ))
+    return out
+
+
+def _tws_tuples(tws, team_id, season_id):
+    out = []
+    for r in tws.itertuples(index=False):
+        out.append((
+            team_id[r.team], season_id[int(r.season)], int(r.week),
+            float(r.overallEpaPerPlay), float(r.offensiveEpaPerPlay), float(r.defensiveEpaPerPlay),
+            float(r.offensivePassEpaPerPlay), float(r.offensiveRushEpaPerPlay),
+            float(r.defensivePassEpaPerPlay), float(r.defensiveRushEpaPerPlay),
+            float(r.eloRating), float(r.eloChange), int(r.sosRank),
+            int(r.recordWins), int(r.recordLosses), int(r.recordTies),
+            float(r.pointsScoredPerGame), float(r.passYardsPerGame), float(r.rushYardsPerGame),
+            float(r.pointsAllowedPerGame), float(r.passYardsAllowedPerGame),
+            float(r.rushYardsAllowedPerGame),
+        ))
+    return out
+
+
+def _batch_insert(cur, table, columns, rows, chunk=500):
+    """Multi-row VALUES in ~500-row chunks (ADR-0015)."""
+    placeholders = "(" + ",".join(["%s"] * len(columns)) + ")"
+    collist = ",".join(columns)
+    for i in range(0, len(rows), chunk):
+        batch = rows[i:i + chunk]
+        sql = f"INSERT INTO {table} ({collist}) VALUES " + ",".join([placeholders] * len(batch))
+        cur.execute(sql, [v for row in batch for v in row])
+
+
+def _write(tws, game_rows, season_rows, cleanup_2024: bool) -> None:
+    """One transaction on one pooled connection (ADR-0015): season ON CONFLICT
+    DO NOTHING, scoped truncate-and-reload of game + teamWeekStats, batch inserts.
+    Either all rows commit or none."""
+    pool = make_pool(load_database_url())
+    try:
+        with pool.connection() as conn:
+            if cleanup_2024:
+                with conn.transaction(), conn.cursor() as cur:
+                    cur.execute(CLEANUP_2024_ONE_SHOT)
+                print("  ran one-shot 2024 hand-seed cleanup (ADR-0015)")
+            with conn.transaction(), conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO season (year, start_date, end_date) VALUES (%s, %s, %s) "
+                    "ON CONFLICT (year) DO NOTHING",
+                    [(int(r.year), r.startDate, r.endDate) for r in season_rows.itertuples()])
+                cur.execute("SELECT id, year FROM season WHERE year = ANY(%s)",
+                            ([int(y) for y in ALL_SEASONS],))
+                season_id = {int(y): int(i) for i, y in cur.fetchall()}
+                cur.execute("SELECT id, abbreviation FROM team")
+                team_id = {a: int(i) for i, a in cur.fetchall()}
+                reload_ids = [season_id[int(y)] for y in BACKFILL_SEASONS]
+
+                cur.execute(DELETE_TEAM_WEEK_STATS, {"reload": reload_ids, "s2026": season_id[2026]})
+                cur.execute(DELETE_GAME, {"reload": reload_ids})
+                _batch_insert(cur, "game", GAME_COLUMNS, _game_tuples(game_rows, team_id, season_id))
+                _batch_insert(cur, "team_week_stats", TWS_COLUMNS,
+                              _tws_tuples(tws, team_id, season_id))
+            # Post-commit verification.
+            with conn.cursor() as cur:
+                for tbl in ("season", "game", "team_week_stats"):
+                    cur.execute(f"SELECT count(*) FROM {tbl}")
+                    print(f"  {tbl}: {cur.fetchone()[0]} rows")
+    finally:
+        pool.close()
 
 
 if __name__ == "__main__":
