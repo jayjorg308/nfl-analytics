@@ -27,5 +27,13 @@ Standalone scripts under `scripts/` for one-off operations:
   and has expected columns. Run after view migrations.
 - `scripts/verify-seed.mjs` — confirms the seed produced realistic
   dashboard data. Run after `npm run db:seed`.
+- `scripts/verify-phase3a.mjs` — confirms the Phase 3a backfill
+  (counts, ragged playoff shape, 2026 baseline, orphans, game-table
+  type round-trip). Branch-agnostic via `DATABASE_URL` and diffable, so
+  a prod run is validated by diffing its output against dev's. Run after
+  `scripts/backfill/build.py`.
+
+The Phase 3a backfill itself lives in `scripts/backfill/` (a self-contained
+`uv`-managed Python project — see its README).
 
 (More will land as the project grows.)

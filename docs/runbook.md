@@ -24,7 +24,14 @@ Before any non-trivial write to prod, apply the universal pre-write discipline:
 
 **Downstream impact:** Game outcome feeds the ELO computation. Correcting an outcome after `teamWeekStats` has been computed requires recomputing ELO from the corrected game forward through every subsequent game both teams played in that season — and propagating the corrected ELO into the next season's Week 0 baseline via the inter-season regression rule (ADR-0014).
 
-> **TODO: filled in during Slice 3 implementation once Phase 3a's ELO computation logic exists.** The procedure depends on having a callable "recompute ELO from game N forward" function — which lands as part of Phase 3a's Python script and Phase 3b's TypeScript handler. Until both exist, manual recomputation is theoretically possible but error-prone enough to not document as a routine procedure.
+**Procedure (historical seasons 2021-2025, before Phase 3b has ingested forward from the game):** Phase 3a's `scripts/backfill/build.py` recomputes the entire ELO chain from the 2021 cold start in one pass, so a historical outcome correction does not need a surgical "recompute from game N forward" — it needs the source corrected and the chain re-run.
+
+1. **Backup branch** (General principle #1): `neonctl branches create --name pre-game-correction-<YYYY-MM-DD>`.
+2. **Correct the source.** nflverse is the system of record; if it published a corrected score, re-running `build.py` picks it up automatically (it re-pulls schedules). If the correction is a manual override nflverse will never carry, it cannot flow through `build.py`'s pull — apply it as a direct `UPDATE` to the `game` row, and record that any later `build.py` re-run will revert it (override and re-run must be coordinated, or the override re-applied after).
+3. **Re-run the backfill:** `cd scripts/backfill && uv run build.py` (no `--cleanup-2024` on a re-run). The transaction-wrapped scoped truncate-and-reload replaces `game` + `team_week_stats` for 2021-2025 atomically (ADR-0015), recomputing ELO across every subsequent game both teams played and the 2026 Week-0 baseline via the inter-season regression (ADR-0014).
+4. **Verify:** `node scripts/verify-phase3a.mjs` — confirm `21 PASS / 0 FAIL`, and diff the output against the known-good reference if one was captured.
+
+If Phase 3b has already ingested 2026 in-season weeks, the corrected 2026 Week-0 baseline makes those rows stale — follow "Re-running Phase 3a after Phase 3b is active" below instead.
 
 ### Correcting `team_week_stats` values
 
@@ -32,7 +39,14 @@ Before any non-trivial write to prod, apply the universal pre-write discipline:
 
 **Downstream impact:** `team_week_stats` is read by the Slate Dashboard's `weekSummary` view directly. Corrections take effect immediately on next page render. Per ADR-0011, the materialised values on `playerGame` (`opponentDefenseRankPass/Rush`) reference `team_week_stats` at time of ingestion — historical corrections to `team_week_stats` do not auto-propagate to `playerGame`, and a separate cascade is documented as an admin operation when `playerGame` data exists.
 
-> **TODO: filled in during Slice 3 implementation.** The procedure body lands once Phase 3a has produced real values and the shape of "typical correction" is understood. Premature documentation risks specifying a procedure for a column shape that hasn't materialised yet.
+**Procedure:** `team_week_stats`' derived columns are computed by `scripts/backfill/build.py` — EPA and pass/rush yards from parquet, record and points from the schedule, SOS from the ELO chain. A wrong aggregate almost always means the computation or its input is wrong, not the stored row, so the correction is to fix the input and re-run, not to `UPDATE` the cell:
+
+1. **Backup branch:** `neonctl branches create --name pre-tws-correction-<YYYY-MM-DD>`.
+2. **Fix the input.** If a parquet revision corrected upstream data, re-running `build.py` picks it up. If it is a *methodology* change, edit the relevant module (`aggregate.py` for EPA, `sos.py` for SOS, `build.py` for record/traditional) **and** refresh the governing ADR — these values are methodology-locked (EPA: ADR-0020, SOS: ADR-0023), so the ADR and the code move together.
+3. **Re-run:** `cd scripts/backfill && uv run build.py` (scoped truncate-and-reload, atomic).
+4. **Verify:** `node scripts/verify-phase3a.mjs` (`21 PASS / 0 FAIL`). Corrections take effect on the Slate Dashboard immediately via the `week_summary` view; per ADR-0011, materialised `opponentDefenseRank*` on `playerGame` does not auto-propagate (a separate cascade when that data exists).
+
+A genuine one-off single-cell fix (the rare case where a full re-run is not warranted) is a single-row `UPDATE` per General principle #2 — but note it will be overwritten by the next `build.py` re-run, which is the authoritative source for these columns.
 
 ### Re-running Phase 3a after Phase 3b is active
 
@@ -40,7 +54,22 @@ Before any non-trivial write to prod, apply the universal pre-write discipline:
 
 **Approach per ADR-0015:** cascade-delete. Delete Phase 3b's 2026 weeks > 0, re-run Phase 3a (which produces a new 2026 Week 0 baseline), then re-enqueue post-game jobs for the deleted weeks via the standard Phase 3b drain path. Reuses Phase 3b's normal processing logic rather than maintaining a separate rewind script.
 
-> **TODO: filled in once Phase 3a and Phase 3b infrastructure exist.** The procedure references the `job_queue` table (Slice 3 migration) and the Phase 3b dispatch surface (Slice 3 cron handlers); both must exist before the cascade-delete steps can be enumerated concretely.
+**Procedure:**
+
+1. **Backup branch:** `neonctl branches create --name pre-3a-rerun-<YYYY-MM-DD>`.
+2. **Cascade-delete Phase 3b's 2026 in-season rows** — the rows Phase 3a does *not* own (season 2026, `week > 0`). Phase 3a owns only `(2026, week = 0)`, so this never touches the baseline:
+   ```sql
+   BEGIN;
+   DELETE FROM team_week_stats WHERE season_id = (SELECT id FROM season WHERE year = 2026) AND week > 0;
+   DELETE FROM game            WHERE season_id = (SELECT id FROM season WHERE year = 2026) AND week > 0;
+   -- plus play / drive for (2026, week > 0) once Phase 3b populates them
+   COMMIT;
+   ```
+3. **Re-run Phase 3a:** `cd scripts/backfill && uv run build.py`. Its scoped reload rewrites 2021-2025 + the 2026 Week-0 baseline and never touches 2026 `week > 0` (step 2 already cleared those), producing the corrected baseline.
+4. **Re-enqueue the cleared 2026 weeks** via Phase 3b's standard drain path — insert a `job_queue` row per cleared post-game week and let the cron reprocess them (ADR-0016). This reuses Phase 3b's normal processing rather than a bespoke rewind; the concrete `job_queue` insert shape lands with the Phase 3b cron handler.
+5. **Verify:** `node scripts/verify-phase3a.mjs` for the Phase 3a portion (`21 PASS / 0 FAIL`); Phase 3b's own verification covers the re-ingested weeks.
+
+If cascade-delete happens more than once or twice in v1, ADR-0015 calls for a dedicated rewind script; premature otherwise.
 
 ## Future procedures
 
