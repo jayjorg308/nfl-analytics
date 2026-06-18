@@ -152,17 +152,22 @@ Building toward a **v1 ship** along [ADR-0010](docs/adr/0010-v1-build-sequence.m
 
 ### What's next
 
-1. **MOV-ELO methodology investigation** (`/research/elo-methodology`): the first
-   research-section publish, derisking the MDX pipeline. (Gate: verify the
-   HFA-in-MOV "matches FiveThirtyEight" claim against 538's published methodology
-   before publishing. See [ADR-0022 §2](docs/adr/0022-elo-application-notes-and-tie-correction.md).)
-2. **Phase 3b**: the Vercel weekly cron writing `game` / `drive` / `play` /
-   `teamWeekStats` from 2026 Week 1 forward, consuming Phase 3a's baseline.
-3. **Slice 4**: player-level ingestion + denormalised opponent-rank fields
+1. **Phase 3b** _(the only remaining Slice 3 sub-slice)_: the Vercel weekly cron
+   writing `game` / `drive` / `play` / `teamWeekStats` from 2026 Week 1 forward,
+   consuming Phase 3a's baseline. Slice 3 completes when Phase 3b ships.
+2. **Slice 4**: player-level ingestion + denormalised opponent-rank fields
    (lights up the Player Page).
-4. **Slice 5**: The Odds API (line columns on the Slate Dashboard + Game Detail).
-5. **Slices 6–9**: the page slices: Game Detail, Player, Props, Team + Team
+3. **Slice 5**: The Odds API (line columns on the Slate Dashboard + Game Detail).
+4. **Slices 6–9**: the page slices: Game Detail, Player, Props, Team + Team
    Leaderboard.
+
+> The MOV-ELO methodology investigation once planned at `/research/elo-methodology`
+> was **cut** (2026-06-18): the ELO is user-facing infrastructure rather than a
+> portfolio piece, and the methodology is fully documented in
+> [ADR-0014](docs/adr/0014-v1-elo-methodology-consolidated.md) /
+> [ADR-0021](docs/adr/0021-playoff-teamweekstats-representation.md) /
+> [ADR-0022](docs/adr/0022-elo-application-notes-and-tie-correction.md). See
+> [ADR-0010](docs/adr/0010-v1-build-sequence.md)'s 2026-06-18 update.
 
 ---
 

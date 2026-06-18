@@ -2,6 +2,8 @@
 
 Supersedes ADR-0004. This ADR consolidates the full v1 ELO methodology — formula, constants, chain initialization, inter-season regression, playoff handling, tie-game handling, warm-up caveat, and tunability posture — in one canonical record. The MOV reversal that motivated the supersession is documented here alongside the rest of the methodology so future readers (and the methodology piece at `/research/elo-methodology`) have a single source of truth.
 
+> **Note (2026-06-18):** the planned `/research/elo-methodology` piece was subsequently **cut** (see [ADR-0010](0010-v1-build-sequence.md)'s 2026-06-18 update; Slice-3 decision #11). This ADR — together with ADR-0021 and ADR-0022 — now stands as the canonical methodology documentation in the piece's place. The methodology content below is unaffected.
+
 ## Formula
 
 Each game updates both teams' ELO using the standard formula `K * (S_actual - S_expected)` where `S_actual` is 1 for a win, 0.5 for a tie, and 0 for a loss, and `S_expected = 1 / (1 + 10^((opponent_elo - team_elo + home_field_advantage) / 400))`. Home-field advantage is **50 rating points** added to the home team's effective rating for the win-probability calculation, inherited from FiveThirtyEight's NFL ELO as a v1 default. Like `K = 20` and the MOV constants, refinable after a full 2026 season of evaluation data. `K` is fixed at **20** across regular season and playoffs.
@@ -36,4 +38,4 @@ The 5-season chain has two distinct milestones. **Differentiation from 1500** em
 
 Phase 3a (the local Python backfill — see ADR-0008 and ADR-0015) computes the chain 2021 → 2026 Week 0 in one run. Phase 3b (the Vercel cron — see ADR-0016) consumes the Week 0 baseline and produces in-season `teamWeekStats` rows iteratively. The formula is the same across phases; Phase 3a runs in pandas, and Phase 3b's implementation choice (TypeScript in-memory vs another shape) is determined during Phase 3b construction.
 
-Hand-verification of 3 games' ELO outcomes (ADR-0012 ship criterion #4) covers the full pipeline including the MOV multiplier. The worked example feeds both this ADR's "is the math right" check and the methodology piece's narrative example.
+Hand-verification of 3 games' ELO outcomes (ADR-0012 ship criterion #4) covers the full pipeline including the MOV multiplier. The worked example feeds this ADR's "is the math right" check. (It was also to have fed the methodology piece's narrative example; that piece is now cut — see the 2026-06-18 note above — so the worked example serves the ADR-as-documentation alone.)

@@ -11,6 +11,11 @@ dashboard's matchup edges and the `/research/elo-methodology` piece's worked
 examples, so getting the standard definition exactly right (no asterisks) is
 load-bearing for the project's reproducibility claim.
 
+> **Note (2026-06-18):** the `/research/elo-methodology` piece was subsequently
+> **cut** (see [ADR-0010](0010-v1-build-sequence.md)'s 2026-06-18 update). The
+> slate dashboard remains a live consumer of these values and the reproducibility
+> claim is unaffected; the cut removes only the second consumer named here.
+
 The findings below were confirmed against the 2024 season during Chunk 2.
 
 ## Play universe

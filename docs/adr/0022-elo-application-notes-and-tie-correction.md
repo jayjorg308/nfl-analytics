@@ -26,6 +26,30 @@ This bug survived ADR-0014's drafting precisely because the *stated outcome* was
 right and only the *justification* was broken — a contradiction prose can hold but
 code cannot, which is why implementing it surfaced it.
 
+**Deviation from 538 (recorded 2026-06-18).** Surfaced while verifying §2 against
+`nfl-elo-game/forecast.py`: 538's reference implementation does **not** use `mult = 1`
+on a tie. Its `result1 == 0.5` branch sets the MOV denominator to `1.0`, giving
+`mult = ln(max(0,1)+1) · 2.2 = ln(2)·2.2 ≈ 1.525`. We use `mult = 1`. So unlike the
+HFA-in-MOV structure (§2, a match), **tie handling is a deliberate deviation from 538**.
+Recorded here so it is auditable regardless of how it is ever framed in print
+(correction-to-538, neutral-deviation, or footnote would be an open authoring decision
+with portfolio stakes). The methodology piece that would have made that call is now cut
+(see the 2026-06-18 note at the end of §2); the framing question only reopens if
+ADR-0012 #2 is re-pointed at an investigation that surfaces tie handling.
+
+**What the `mult = 1` reasoning actually established (honest record, no retrofit).** The
+original argument established **"1, not 0" — not "1 beats 1.525."** It was framed entirely
+as correcting ADR-0014's *internal* inconsistency: ADR-0014 stated the intended outcome
+(collapse to the standard `K·(S_actual − S_expected)`) but its justification (`ln(0+1)=0`)
+produced a *zeroed* update instead. `mult = 1` was selected because 1 is the multiplicative
+identity that recovers that stated standard update. The analytical "nudge toward each other"
+argument rules out `mult = 0` (which freezes unequal teams) but does **not** distinguish 1
+from 1.525 — any positive multiplier produces a nudge. 538's 1.525 was never evaluated in
+the §1 reasoning. So our position is "1 over 0, with 1 = the identity that restores the base
+formula," **not** a demonstrated "1 is superior to 1.525." If the piece wants to frame the
+tie deviation as an improvement on 538, that comparison still has to be made — it was not
+made here.
+
 **The "nominal winner" convention is now vestigial.** ADR-0014 introduced "treating
 the lower-pre-game-ELO team as the nominal 'winner' with `score_diff = 0`" solely to
 keep the autocorrelation denominator evaluable. The `mult = 1` short-circuit never
@@ -45,15 +69,51 @@ the **home-field-adjusted game ratings** (winner game-Elo minus loser game-Elo) 
 same adjusted ratings the win-probability term uses. The effect is small (e.g. the
 2021 opener's multiplier is 3.334 with HFA vs 3.258 without).
 
-**Pre-publication verification flag.** Include-HFA is adopted now on asterisk-
-avoidance grounds (match the cited standard exactly, as with the two-point exclusion
-in ADR-0020). But the claim that this *matches FiveThirtyEight* is **not yet verified
-against 538's published methodology** — it must be checked against 538's source
-(their methodology posts / GitHub) before the `/research/elo-methodology` piece
-publishes. If 538 used raw (non-adjusted) ratings in the autocorrelation term, either
-switch to match or document a deliberate deviation: the asterisk-avoidance only works
-if the "matches 538" claim is true. This is a pre-publication gate, not a Chunk 3
-blocker.
+**Verification — RESOLVED 2026-06-18: structure matches 538's reference implementation.**
+Previously adopted on asterisk-avoidance grounds (match the cited standard exactly, as
+with the two-point exclusion in ADR-0020) but unverified — resting on recollection of
+538's methodology, not their source. Now verified against FiveThirtyEight's published
+code, `nfl-elo-game/forecast.py`
+(https://github.com/fivethirtyeight/nfl-elo-game/blob/master/forecast.py), fetched from
+source. 538 computes the rating gap **once** with HFA folded in, then feeds that *same*
+adjusted value into both the win-probability term and the MOV denominator (verbatim):
+
+```python
+HFA = 65.0     # Home field advantage is worth 65 Elo points
+elo_diff = team1['elo'] - team2['elo'] + (0 if game['neutral'] == 1 else HFA)
+game['my_prob1'] = 1.0 / (math.pow(10.0, (-elo_diff/400.0)) + 1.0)
+mult = math.log(max(pd, 1) + 1.0) * (2.2 / (1.0 if game['result1'] == 0.5
+       else ((elo_diff if game['result1'] == 1.0 else -elo_diff) * 0.001 + 2.2)))
+```
+
+(team1 = home team; HFA added only when not neutral.) The `(elo_diff if won else
+-elo_diff)` only *signs* the gap from the winner's perspective — it does not strip HFA
+back out. Our implementation does exactly this. **Outcome #1: the HFA-in-MOV-denominator
+structure matches 538**, so the asterisk-avoidance holds, no code change is triggered (no
+re-backfill), and the `/research/elo-methodology` piece may claim a structural/formula
+match.
+
+**What is NOT claimed (numeric HFA).** The match is structural, not numeric. The HFA
+*constant* differs: we use **50**, this repo uses **65**, and 538's production model used
+a rolling ~55. Per ADR-0014, our 50 is an inherited, tunable v1 default — so the piece
+claims a *formula/structure* match (HFA folded into the rating gap before the MOV
+denominator), **not** a numeric-HFA match.
+
+**Cite the right 538.** The "matches 538" claim is most precisely "matches 538's public
+reference implementation in `nfl-elo-game/forecast.py`" — the inspectable-code version.
+538's production model carried further refinements we deliberately do not adopt (rolling
+HFA; the 1.2 playoff multiplier — cf. ADR-0014's no-playoff-K-bump stance). The piece
+should cite the GitHub repo as the reference so a reader who knows the more elaborate
+production model does not read it as overclaiming.
+
+**Note (2026-06-18): the `/research/elo-methodology` piece was cut** (see
+[ADR-0010](0010-v1-build-sequence.md)'s 2026-06-18 update; Slice-3 decision #11). The
+verification recorded in this section therefore no longer feeds a publication — it
+stands as part of the methodology documentation in the ADR set (ADR-0014/0021/0022),
+which now serves the role the piece would have. The "matches 538" framing above is
+retained as the verified factual finding, not as a claim a forthcoming piece will make;
+the "cite the right 538" and tie-deviation-framing guidance is preserved for whatever
+investigation, if any, ADR-0012 #2 is eventually re-pointed at.
 
 ## 3. Neutral-site home-field is zero (clarification)
 

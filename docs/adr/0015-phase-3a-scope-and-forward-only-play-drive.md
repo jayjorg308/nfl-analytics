@@ -12,6 +12,8 @@ A consequence of the narrowing: the `play` and `drive` tables are **forward-only
 
 The first published research investigation (the MOV-ELO methodology piece bundled into Slice 3 — see the ADR-0010 update for engine-work-and-publish coupling) draws its worked examples from `teamWeekStats` data: Phase 3a's historical output and Phase 3b's forward output as it accumulates. It does not depend on historical `play` or `drive` rows. This is consistent with the forward-only stance — the methodology piece's analytical needs are met by aggregate-level data, and ad-hoc parquet reads at publish time handle any future investigation requiring historical play-level context.
 
+> **Note (2026-06-18):** the MOV-ELO methodology piece referenced in this paragraph was subsequently **cut** (see [ADR-0010](0010-v1-build-sequence.md)'s 2026-06-18 update). The point this paragraph makes is unaffected — the forward-only `play`/`drive` scope boundary never depended on the piece, and any future investigation needing historical play-level data still follows the separate-later-backfill principle above.
+
 ## Phase 3a / Phase 3b ownership boundary
 
 Re-run safety hinges on a precise ownership boundary. **Phase 3a owns** the rows enumerated above and nothing else. **Phase 3b owns** every row for `seasonId = 2026` with `week > 0`, plus all rows from 2027 forward. Phase 3a's idempotent re-runs delete-and-reload only Phase 3a-owned rows, never touching Phase 3b's output — preserving the invariant that Phase 3a can be re-run safely at any point without corrupting Phase 3b's ingested data.

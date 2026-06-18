@@ -27,10 +27,13 @@ pending confirmation (the tie case needs a 0014 amendment):
   [MOV-HFA] The MOV autocorrelation term's `winner_elo_diff` uses the
       home-field-ADJUSTED game ratings (winner game-Elo minus loser game-Elo).
       ADR-0014 says "pre-game ELO gap from the winner's perspective" without
-      pinning HFA; include-HFA is the chosen reading (ADR-0022). FLAG: the claim
-      that this matches FiveThirtyEight must be verified against 538's published
-      methodology BEFORE the methodology piece publishes - if 538 used raw
-      ratings, switch or document a deliberate deviation. Small effect either way.
+      pinning HFA; include-HFA is the chosen reading (ADR-0022). VERIFIED
+      2026-06-18 against 538's reference code nfl-elo-game/forecast.py: 538 folds
+      HFA into elo_diff once and feeds the same adjusted gap into both the win-prob
+      term AND the MOV denominator, so our structure MATCHES (Outcome #1, no code
+      change). See ADR-0022 sec 2. (The methodology piece that gate blocked was
+      itself later cut - ADR-0010 2026-06-18 update; the finding stands as ADR
+      documentation.)
 
   [TIE] ADR-0014's tie prose was internally inconsistent: it stated the right
       OUTCOME ("collaps[es] to the standard K*(S_actual - S_expected)") but
