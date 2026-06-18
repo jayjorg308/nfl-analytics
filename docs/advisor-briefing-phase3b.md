@@ -75,7 +75,19 @@ one auth boundary, one log stream), *not* a separate worker service. The
 TypeScript/Python gap is bridged by **reading nflverse parquet releases directly in
 Node** (`apache-arrow` / `parquetjs` over HTTP from GitHub releases) — no Python in
 production. (Python exists only in the local backfill script, which is never
-deployed.) Heavy weekly jobs that might exceed Vercel's **300s function timeout** are
+deployed.)
+
+The nflverse play-by-play release is **one season-level parquet, cumulative, revised in
+place** — not per-week artifacts. nflverse overwrites the rolling file as the season
+progresses (ADR-0019: the provisional release is gone once overwritten — the reason
+write-once + the pre-registered re-pull validation exist), and the working-set file at
+its Week-18 peak is well under 100 MB, re-downloaded on each cron invocation (ADR-0016).
+Phase 3a's backfill reads it one season at a time (`scripts/backfill/aggregate.py`, via
+`nfl.import_pbp_data([year], …)`). **Consequence for Phase 3b:** the parquet pull is
+**per-cron-run, not per-job** — discovery pulls once and the per-game ingestion jobs read
+game-scoped slices, so game-granularity does not multiply downloads.
+
+Heavy weekly jobs that might exceed Vercel's **300s function timeout** are
 **chunked through a `jobQueue` Postgres table**: each pending row is a unit of work;
 each cron invocation drains as many as fit in its window; the next invocation resumes.
 Crash-safe by construction. Documented fallback if parquet-in-Node hits friction: a
@@ -159,11 +171,19 @@ Migrations present: `0000_initial_schema.sql` and `0001_create_week_summary_view
 - **`teamWeekStats`** — exists, holds Phase 3a's output (EPA columns, `eloRating`,
   `eloChange`, `sosRank`, win/loss/tie record, traditional per-game aggregates). Each
   row is **season-to-date through its week** (cumulative). Phase 3b writes forward rows.
+
+  **Per-week row counts (regular season):** the table carries a **constant 32 rows per
+  week** — every team gets a row, and bye teams are emitted via **carry-forward** (ELO
+  unchanged, `eloChange = 0`), not skipped (ADR-0021, confirmed in its row-count table).
+  **Games per week is *not* constant:** ~13–16, dipping on bye weeks (byes ~weeks 5–14,
+  2–6 teams/week). These are two different counts the aggregation step must track —
+  **32 team-rows to write** vs. a **variable expected game count to gate on.**
 - **`drive`** — **greenfield. Does not exist. Phase 3b creates it.** (Forward-only:
   empty for 2021–2025, populated 2026 wk1+.) Some of its shape is anticipated in
   ADR-0013 (e.g. `driveNumber`, the `play.driveId` FK).
-- **`play`** — **greenfield. Does not exist. Phase 3b creates it**, per ADR-0018's
-  inclusion principle. Forward-only, same as `drive`.
+- **`play`** — **greenfield. Does not exist. Phase 3b creates it.** Forward-only (empty
+  for 2021–2025) per **ADR-0015**'s ownership boundary; its **column inclusion** is
+  governed by ADR-0018. Same forward-only status as `drive`.
 - **`jobQueue`** — **greenfield. Does not exist in the schema and has no migration.**
   Phase 3b creates it. ⚠️ **Confidence flag:** the queue's *mechanics* are well
   specified in ADR-0016 (the drain SQL, `status`, `not_before`, `created_at`,
@@ -300,3 +320,37 @@ completeness invariant, and re-run/cascade safety — then, once that's framed, 
 `jobQueue` table shape (columns, enums, payload, indexes) and whether it deserves its own
 ADR mostly falls out of it. (Reminder per §6: confirm the current proposed queue shape
 with the codebase agent before building on its specifics — it's sketched, not settled.)
+
+**Update — granularity resolved.** The unit-of-work question is settled as a **two-tier
+model**: per-game ingestion jobs (each carrying its own completeness gate + retry) plus a
+dependent per-week aggregation job (cross-team ranks + the `teamWeekStats` close-out,
+gated on its week's games being complete). This is being written up as its own ADR; the
+queue table shape follows from it. Open sub-items the granularity ADR / Phase 3b build
+must still close:
+
+- **Incremental bye carry-forward.** Phase 3a gets byes "for free" by building a
+  whole-season team×week grid in one pass (`aggregate.py` reindexes so byes become
+  explicit 0-rows; a bye adds 0 to both running sum and count, so the cumulative mean is
+  unchanged). **That trick does not transfer to 3b's incremental weekly path** — 3b needs
+  an explicit carry-forward rule in the weekly aggregation for the 2–6 bye teams.
+  Semantics are already settled by ADR-0021 (carry forward, ELO unchanged, `eloChange =
+  0`); the only open piece is *where* this lives in the incremental aggregation step.
+  (Repo-confirmed: no forward/incremental aggregation code exists yet — `aggregate.py` is
+  the season-grid backfill only — so this is genuinely unwritten, not hiding somewhere.)
+- **Source of "expected games for week N"** (the aggregation gate's precondition count).
+  **Repo finding:** no scheduled `game` rows are pre-loaded today — Phase 3a writes *only
+  completed* games (`build.py` filters the schedule to non-null scores and sets `status =
+  'final'`) and writes no 2026 `game` rows at all, so a `COUNT(game WHERE … gameStatus =
+  'scheduled')` would currently return zero. **However**, the nflverse schedule itself is
+  the natural authoritative source and is already in use: `nfl.import_schedules([year])`
+  returns the full week-N slate (future games present, scores null until played). So the
+  gate's expected count most cleanly derives from the **schedule**, decoupled from the DB.
+  The remaining *open* choice is whether Phase 3b *also* pre-loads scheduled `game` rows
+  (e.g. so the Slate Dashboard can show the upcoming slate) — a separate, dashboard-driven
+  decision, not a precondition for the gate.
+- **plays/game is unmeasured.** The `play` table is greenfield/empty — forward-only per
+  **ADR-0015**'s ownership boundary (Phase 3b creates it; column inclusion governed by
+  ADR-0018) — so per-game play volume is genuinely unknown in-repo; the "~150–180" figure
+  is an unverified estimate. The 300s chunking math depends on it, so **measure actual
+  plays/game on the first live ingestion week and size chunking against that**, not the
+  estimate. (Games/week derived ~15 avg, bye-variable — not a flat 16.)

@@ -15,6 +15,13 @@
       "when": 1781201437365,
       "tag": "0001_create_week_summary_view",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781821416214,
+      "tag": "0002_light_mesmero",
+      "breakpoints": true
     }
   ]
 }

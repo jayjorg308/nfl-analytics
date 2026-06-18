@@ -1,4 +1,6 @@
 // Drizzle schema — Slice 1 tables: season, team, game, teamWeekStats.
+// Phase 3b (ADR-0026) adds: drive + play (forward-only, greenfield per ADR-0015;
+// empty for 2021–2025, populated 2026 wk1+) and the job_queue ingestion table.
 //
 // Sections below are pre-staged for the eventual per-domain file split
 // (docs/schema-design.md → Drizzle conventions → Schema file organisation).
@@ -16,6 +18,7 @@ import {
   doublePrecision,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   pgView,
@@ -54,6 +57,16 @@ export const divisionEnum = pgEnum("division", [
   "nfc_north",
   "nfc_south",
   "nfc_west",
+]);
+
+// Phase 3b jobQueue (ADR-0026 unit-of-work taxonomy; ADR-0016 status lifecycle).
+export const jobTypeEnum = pgEnum("job_type", ["ingest_game", "aggregate_week"]);
+
+export const jobStatusEnum = pgEnum("job_status", [
+  "pending",
+  "in_progress",
+  "completed",
+  "failed",
 ]);
 
 // ============================================================================
@@ -175,6 +188,169 @@ export const teamWeekStats = pgTable(
 );
 
 // ============================================================================
+// PLAY-BY-PLAY (Phase 3b, forward-only — ADR-0015 / ADR-0018 / ADR-0013)
+// ============================================================================
+
+// Drives extract to their own table during ingestion and `play.driveId`
+// references the parent (ADR-0013 option b). Columns + mappings per
+// docs/parquet-mapping.md (drive_* → here); dedup by (game_id, fixed_drive).
+export const drive = pgTable(
+  "drive",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    gameId: bigint({ mode: "number" })
+      .notNull()
+      .references(() => game.id),
+    // fixed_drive — canonical drive number (respects mid-game corrections).
+    driveNumber: smallint().notNull(),
+    result: text(), // fixed_drive_result
+    playCount: smallint(), // drive_play_count
+    timeOfPossession: integer(), // drive_time_of_possession → seconds (MM:SS parsed at ingest)
+    firstDowns: smallint(), // drive_first_downs
+    insideTwenty: boolean(), // drive_inside20 (0/1 → bool)
+    endedWithScore: boolean(), // drive_ended_with_score (0/1 → bool)
+  },
+  (t) => [
+    unique("drive_game_id_drive_number_unique").on(t.gameId, t.driveNumber),
+  ],
+);
+
+// Column set per ADR-0018's inclusion principle (Descriptor + Volatility tests),
+// applied via docs/parquet-mapping.md. Player-attribution columns
+// (rusher/receiver/passer) are deferred to Slice 4 (no `player` table yet;
+// team-level scope per ADR-0015) — ADR-0018's reversible ADD COLUMN backfills
+// them then. Reconstructable rollups / derivable companions are excluded.
+export const play = pgTable(
+  "play",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    gameId: bigint({ mode: "number" })
+      .notNull()
+      .references(() => game.id),
+    driveId: bigint({ mode: "number" }).references(() => drive.id),
+    // Denormalised season/week (ADR-0018 descriptor set) so aggregate_week's
+    // season-to-date scan (ADR-0026) filters here without a join to `game`.
+    // seasonId is the resolved FK (uniform with the rest of the schema).
+    seasonId: bigint({ mode: "number" })
+      .notNull()
+      .references(() => season.id),
+    week: smallint().notNull(),
+    // nflverse play identifier; (game_id, play_id) is the upsert / idempotency
+    // key (ADR-0019 write-once / cascade-replay) and serves per-game gate reads.
+    playId: integer().notNull(),
+    orderSequence: integer(), // nflfastR canonical within-game sort key
+    // Resolved team FKs (ADR-0026 decision B): nflverse posteam/defteam
+    // abbreviations are resolved to team_id at ingest; unknown abbr = loud fail.
+    posteamTeamId: bigint({ mode: "number" }).references(() => team.id),
+    defteamTeamId: bigint({ mode: "number" }).references(() => team.id),
+    // Participant descriptors (ADR-0018 query-proven). Raw nflverse ids/names as
+    // nullable TEXT with NO FK — the `player` table is Slice 4, which adds the FK
+    // and resolves text→player_id then. Captured now so each write-once row is
+    // complete from a single parquet release (ADR-0019), sparing Slice 4 a revisit.
+    rusherPlayerId: text(),
+    rusherPlayerName: text(),
+    receiverPlayerId: text(),
+    receiverPlayerName: text(),
+    passerPlayerId: text(),
+    passerPlayerName: text(),
+    // Classification (0/1 → bool). pass|rush is ADR-0020's EPA universe;
+    // twoPointAttempt is its exclusion.
+    pass: boolean(),
+    rush: boolean(),
+    passAttempt: boolean(),
+    rushAttempt: boolean(),
+    completePass: boolean(),
+    qbDropback: boolean(),
+    qbScramble: boolean(),
+    twoPointAttempt: boolean(),
+    shotgun: boolean(),
+    noHuddle: boolean(),
+    qbHit: boolean(),
+    isSuccessful: boolean(), // success (= epa>0; stored as ergonomics convenience)
+    // Situational descriptors (ADR-0018 Descriptor test, natural breadth).
+    down: smallint(),
+    yardsToGo: smallint(),
+    quarter: smallint(),
+    timeRemainingSeconds: integer(), // `time` MM:SS within quarter → seconds
+    runLocation: text(),
+    runGap: text(),
+    passLocation: text(),
+    passLength: text(),
+    // Yardage. passingYards/rushingYards are the box-score universe (exclude
+    // 2pt) summed by teamWeekStats' traditional aggregates (build.py / ADR-0020).
+    yardsGained: integer(),
+    passingYards: integer(),
+    rushingYards: integer(),
+    receivingYards: integer(),
+    airYards: integer(),
+    yardsAfterCatch: integer(),
+    // In-game score, possession-team frame (ADR-0013 / parquet-mapping.md).
+    scoreOffense: integer(), // posteam_score
+    scoreDefense: integer(), // defteam_score
+    // Non-reconstructable base model outputs (ADR-0018 Volatility test).
+    epa: doublePrecision(),
+    airEpa: doublePrecision(),
+    wpa: doublePrecision(),
+    cpoe: doublePrecision(),
+    xpass: doublePrecision(),
+    passOverExpected: doublePrecision(), // pass_oe
+    expectedPointsBefore: doublePrecision(), // ep
+  },
+  (t) => [
+    // Upsert conflict target; game_id-leading also serves the gate's per-game reads.
+    unique("play_game_id_play_id_unique").on(t.gameId, t.playId),
+    // aggregate_week season-to-date scan: WHERE season_id = S AND week <= N.
+    index("play_season_id_week_idx").on(t.seasonId, t.week),
+    index("play_drive_id_idx").on(t.driveId),
+  ],
+);
+
+// ============================================================================
+// INGESTION INFRASTRUCTURE (Phase 3b — ADR-0008 / ADR-0016 / ADR-0026)
+// ============================================================================
+
+// Per-type payloads (ADR-0026). The `job_type` COLUMN is the sole discriminant —
+// no discriminant is embedded in the jsonb (which can drift from the column).
+// The payload is an untyped trust boundary until parsed: at drain, narrow on the
+// row's `job_type` and parse the payload against the matching per-type schema
+// (runtime validation + compile-time narrowing). ingest_game carries the game to
+// ingest; aggregate_week carries the week to close out + its snapshotted count.
+export type IngestGamePayload = {
+  nflverseGameId: string;
+  seasonYear: number;
+  week: number;
+};
+export type AggregateWeekPayload = {
+  seasonYear: number;
+  week: number;
+  expectedGames: number;
+};
+export type JobPayload = IngestGamePayload | AggregateWeekPayload;
+
+export const jobQueue = pgTable(
+  "job_queue",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    jobType: jobTypeEnum().notNull(),
+    payload: jsonb().$type<JobPayload>().notNull(),
+    status: jobStatusEnum().notNull().default("pending"),
+    notBefore: timestamp({ withTimezone: true, mode: "date" }),
+    createdAt: timestamp({ withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    // in_progress-since, drives the 15-minute stalled-job sweep (ADR-0016).
+    startedAt: timestamp({ withTimezone: true, mode: "date" }),
+    retryCount: integer().notNull().default(0),
+  },
+  (t) => [
+    // ADR-0016 drain predicate + ordering; partial clause keeps the index tiny.
+    index("job_queue_pending_idx")
+      .on(t.notBefore, t.createdAt)
+      .where(sql`${t.status} = 'pending'`),
+  ],
+);
+
+// ============================================================================
 // RELATIONS
 // ============================================================================
 
@@ -189,7 +365,7 @@ export const teamRelations = relations(team, ({ many }) => ({
   teamWeekStats: many(teamWeekStats),
 }));
 
-export const gameRelations = relations(game, ({ one }) => ({
+export const gameRelations = relations(game, ({ one, many }) => ({
   season: one(season, { fields: [game.seasonId], references: [season.id] }),
   homeTeam: one(team, {
     fields: [game.homeTeamId],
@@ -200,6 +376,29 @@ export const gameRelations = relations(game, ({ one }) => ({
     fields: [game.awayTeamId],
     references: [team.id],
     relationName: "awayTeam",
+  }),
+  drives: many(drive),
+  plays: many(play),
+}));
+
+export const driveRelations = relations(drive, ({ one, many }) => ({
+  game: one(game, { fields: [drive.gameId], references: [game.id] }),
+  plays: many(play),
+}));
+
+export const playRelations = relations(play, ({ one }) => ({
+  game: one(game, { fields: [play.gameId], references: [game.id] }),
+  drive: one(drive, { fields: [play.driveId], references: [drive.id] }),
+  season: one(season, { fields: [play.seasonId], references: [season.id] }),
+  posteamTeam: one(team, {
+    fields: [play.posteamTeamId],
+    references: [team.id],
+    relationName: "posteamTeam",
+  }),
+  defteamTeam: one(team, {
+    fields: [play.defteamTeamId],
+    references: [team.id],
+    relationName: "defteamTeam",
   }),
 }));
 
