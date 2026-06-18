@@ -17,3 +17,5 @@ Slice 3 — "real ingestion" — is not a single deliverable. It splits into two
 **Phase 3b: current-season cron** (Vercel cron functions, ongoing). Picks up from Phase 3a's terminal state — the prior season's final ELO is the input to the current season's Week-0 regression per ADR-0004 — and runs the weekly post-game ingestion path documented above.
 
 3a as prerequisite to 3b is what makes the dashboard's ELO column meaningful from Week 1 onwards. Running 3b first, or skipping 3a entirely, would produce 8-10 weeks of noise-dominated ELO on a user-facing surface (per ADR-0004's "Historical bootstrap prerequisite") — which would invalidate the analytical credibility of the Slice 3 ship and force a backfill-then-rerender remediation under time pressure.
+
+> **Note:** the ADR-0004 citations in this section now resolve to **ADR-0014**, which superseded ADR-0004 as the consolidated v1 ELO methodology (cold-start chain, inter-season regression, MOV). The regression and historical-bootstrap reasoning is unchanged; only the canonical ADR number moved.
