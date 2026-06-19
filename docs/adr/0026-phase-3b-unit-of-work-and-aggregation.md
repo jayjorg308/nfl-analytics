@@ -34,7 +34,7 @@ ingestion upsert key.
 complete (see the precondition guard below). Reads the prior week's `eloRating` to advance
 the ELO chain, **recomputes** the cumulative EPA (the `*EpaPerPlay` columns) and the
 traditional per-game columns from the `play` and `game` rows by season-to-date aggregation
-(see the 300s budget section), computes the cross-team `sosRank` ranks, and increments the
+(see the 300s budget section), computes the cross-team `sosRank` ranks, and advances the
 win/loss/tie record; then writes that week's rows (including carry-forward rows — see the
 production rule below).
 
@@ -142,7 +142,13 @@ on that week's plays being present:
   games played to date.
 - `eloRating` / `eloChange` are read from the prior week's row and advanced by this week's
   game outcomes — the ELO chain is genuinely incremental (a rating, not a cumulative mean).
-- `recordWins` / `recordLosses` / `recordTies` is an incrementable count.
+- `recordWins` / `recordLosses` / `recordTies` advances as a count, computed as the **prior
+  week's (N−1, frozen) record plus this week's result read from the `game` table** (or
+  recomputed season-to-date) — **never read-own-row-and-increment.** Both inputs are fixed,
+  so the output is deterministic and the handler is idempotent under re-run. This wording is
+  load-bearing: read-own-and-increment is the one realization that breaks idempotency, and
+  ADR-0027 forbids it explicitly (the enqueue dedup guard relies on this handler being
+  idempotent for concurrent/re-run safety).
 
 The 300s bound holds by a **scan-size** argument, not an incremental-carry one: the
 cumulative is *season-to-date* and `teamWeekStats` is per-season cumulative (it resets each
@@ -194,7 +200,9 @@ against real volume on the first live ingestion week, not the estimate.
   `teamWeekStats` stores per-play means and per-game rates rather than the running
   sums/counts a carried delta would need, `aggregate_week` recomputes each cumulative
   column by season-to-date aggregation over `play` / `game` (the ELO rating is read from
-  the prior row and advanced; record is incremented). This (a) needs **no schema change**
+  the prior row and advanced; record is computed as prior-week + this week's game result,
+  **not** read-own-and-increment — see the `*PerPlay`/record bullet above and ADR-0027).
+  This (a) needs **no schema change**
   and leaves Phase 3a's historical `teamWeekStats` rows untouched, and (b) is **drift-free
   and cascade-robust** — recompute-from-source cannot desync from the underlying `play`
   rows after a partial write or an ADR-0015 cascade re-run, the way a carried cumulative
@@ -225,7 +233,7 @@ watch-item, not a design blocker — ADR-0016's retry already absorbs a publicat
 
 1. **Exact record-column treatment on carry-forward rows** — confirmed against ADR-0021
    here (carried forward unchanged, consistent with "advancing as a count"); re-confirm at
-   build that the handler increments record only on played games.
+   build that the handler advances record only on played games.
 2. **plays/game measurement** on the first live ingestion week → finalize `ingest_game`
    chunking sizing.
 3. **The playoff-schedule-publication live check** above.
@@ -243,3 +251,6 @@ watch-item, not a design blocker — ADR-0016's retry already absorbs a publicat
   supplies the incremental production mechanism it left open).
 - ADR-0023 — strength-of-schedule / `sosRank`, the cross-team reduction computed in
   `aggregate_week`.
+- ADR-0027 — handler idempotency-by-construction + the enqueue dedup guard: closes the
+  enqueue-idempotency question this ADR left open, and depends on `aggregate_week`'s
+  record column being computed (not incremented) as pinned above.
