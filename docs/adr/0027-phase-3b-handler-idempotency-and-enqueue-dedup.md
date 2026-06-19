@@ -85,6 +85,20 @@ bare-inserting ingest, and it covers ingest's incidental double-cron case for fr
 Realized as a single atomic `INSERT … WHERE NOT EXISTS (… a pending/in_progress job for this
 key …)`.
 
+> **Note (2026-06-19): the ingest-vs-aggregate overlap asymmetry above COLLAPSES under
+> [ADR-0028](0028-phase-3b-discovery-completeness-targeting.md)'s day-agnostic targeting — and
+> this STRENGTHENS the uniform-guard conclusion.** The asymmetry argument here rested on
+> `ingest_game` being "day-partitioned" so its overlap is only incidental. ADR-0028 removes the
+> day-partitioning: discovery targets purely on data-completeness state, so an unfrozen game is
+> re-targeted *every* run until its `playsFrozenAt` marker is set — structurally identical to
+> `aggregate_week` being re-targeted every run until its rows exist. So both types are now the
+> same shape: *re-targeted every run until their completeness signal exists, prevented by filter
+> (i) (a live job) + filter (ii) (the completeness signal)*. Overlap is prevented by **the
+> filters, not the calendar.** The uniform guard is therefore even better justified than the
+> asymmetry argument claimed — it no longer needs the asymmetry at all. (ADR-0028 also pins the
+> two invariants that make filter (i) a *complete* dedup story: INSERT-only-from-discovery and
+> live-scoped ensure-exists.)
+
 ### Lifecycle scope: `pending`/`in_progress` only — and the second filter
 
 The guard keys on the **live** lifecycle (`pending`/`in_progress`) only, **never** "a
@@ -114,7 +128,11 @@ retry/backoff already chases not-yet-complete work by re-running the *same* row.
 resweep would duplicate that retry mechanism. A permanently-incomplete game fails out at 5
 attempts → human attention (ADR-0016). With this, `ingest_game` has no *structural*
 duplication — each game once, on its day, retries self-contained — confirming the asymmetry
-above.
+above. (**The "each game once, on its day" / asymmetry framing is retracted by
+[ADR-0028](0028-phase-3b-discovery-completeness-targeting.md)** — discovery targets
+day-agnostically on data-completeness state, so an unfrozen game *is* re-targeted every run,
+prevented from duplicating by the filters, not the calendar; see the §B note above. The
+no-blind-resweep conclusion itself stands; only the day-partitioning rationale for it does not.)
 
 ## Why no index
 

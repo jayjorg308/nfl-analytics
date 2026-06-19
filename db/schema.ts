@@ -126,6 +126,15 @@ export const game = pgTable(
     // Idempotency keys for ingestion upserts.
     nflverseGameId: text().notNull().unique("game_nflverse_game_id_unique"),
     oddsApiEventId: text(),
+    // Phase 3b gate-passed / freeze-point marker (ADR-0028; records ADR-0019's
+    // completeness-gate pass). NULL = not gate-passed; non-null = plays frozen as-of this
+    // instant. Set-once, LAST step of ingest_game on gate pass (COALESCE keeps it stable
+    // under stall-sweep re-runs). This is filter (ii)'s completeness read for ingest_game —
+    // play-presence != gate-passed, so the read keys off this marker, NOT play rows. Dies
+    // with the game row on the ADR-0015 cascade-delete, re-exposing the unit to discovery.
+    // Distinct from `status` (real-world game state): a game can be `final` with plays
+    // incomplete (the write-once hole), so the two are deliberately orthogonal.
+    playsFrozenAt: timestamp({ withTimezone: true, mode: "date" }),
   },
   (t) => [
     index("game_season_week_idx").on(t.seasonId, t.week),

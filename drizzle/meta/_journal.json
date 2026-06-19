@@ -22,6 +22,13 @@
       "when": 1781821416214,
       "tag": "0002_light_mesmero",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781884785934,
+      "tag": "0003_powerful_vector",
+      "breakpoints": true
     }
   ]
 }

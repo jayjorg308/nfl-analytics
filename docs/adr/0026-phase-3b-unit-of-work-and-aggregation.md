@@ -56,6 +56,20 @@ the unmet precondition is simply a further trigger reusing the same path. There 
 `depends_on` column and no new dependency-resolution machinery** — the queue stays a flat
 drain.
 
+> **Note (2026-06-19): the runtime precondition mechanism above is RELOCATED by
+> [ADR-0028](0028-phase-3b-discovery-completeness-targeting.md) §5.** The
+> *handler-runtime* check-and-backoff described here collides with ADR-0016's 5-attempt cap
+> (a precondition can legitimately stay unmet >24h — Monday enqueue, Tuesday MNF — so the job
+> can fail out before it could possibly succeed). ADR-0028 moves the precondition into
+> discovery's **enqueue gate**: `aggregate_week(W)` is enqueued only once *all of W's
+> scheduled games are frozen*, so there is no precondition-unmet retry to collide with the
+> cap. **This paragraph's load-bearing decision — no `depends_on` column, no dependency engine,
+> flat drain — survives unchanged** (the enqueue gate is a single `count == count` data-state
+> predicate, not an orchestration graph); only *where* the precondition is evaluated moves.
+> Do not rebuild the runtime guard described here. `expectedGames` keeps its place in the
+> payload and its snapshot rationale below, but its role shifts from runtime backoff-guard
+> denominator to the handler's execute-time precondition-assertion reference count.
+
 ## The "expected games for week N" denominator
 
 The precondition count is sourced from the **nflverse schedule** and **snapshotted at
@@ -74,10 +88,19 @@ not live on every drain — so the denominator is stable for the week being inge
 
 ## Discovery: week-reactive enqueue
 
-Each cron run pulls the season parquet once (ADR-0016: parquet is re-downloaded per
-invocation; the Week-18 peak is well under 100 MB) and reads the schedule, then enqueues
-the `ingest_game` jobs for the games present plus the single `aggregate_week` job for the
-week, stamped with the snapshotted expected count. Discovery **never pre-enqueues the
+Each cron run reads the schedule, then enqueues the `ingest_game` jobs for the games present
+plus the single `aggregate_week` job for the week — the latter **only once the week's games
+are all frozen** (ADR-0028 §5 relocates the precondition into this enqueue gate) — stamped
+with the snapshotted expected count.
+
+> **Note (2026-06-19): discovery is schedule-only — corrected by
+> [ADR-0028](0028-phase-3b-discovery-completeness-targeting.md) §4.** The original wording
+> here ("pulls the season parquet once") was a leftover from an earlier division of labor.
+> Discovery needs only the **light schedule file** (matchups, scores, `gameType`, dates) for
+> enumeration, the denominator, and score-availability; the heavy play-by-play parquet is the
+> `ingest_game` **handler's** input, pulled on the drain path, not discovery's.
+
+Discovery **never pre-enqueues the
 whole season ahead of time**: playoff `nflverseGameId`s do not exist until each round's
 matchups are set, so enqueue must *react* to the schedule as the bracket fills in
 round-by-round. (This is also why the denominator is snapshotted per week at discovery
