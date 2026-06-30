@@ -1,4 +1,4 @@
-# Advisor briefing — NFL Analytics, Phase 3b
+# Advisor briefing — NFL Analytics, Slice 4
 
 > **Purpose of this document.** You are an architecture advisor in a separate chat
 > that cannot see the repo. This briefing is your only ground truth. It was written
@@ -25,74 +25,70 @@ strength-of-schedule, and (later) prop research, via a guided weekly workflow
 
 The load-bearing framing (ADR-0025): **v1 is the working tool for the friend group.**
 The portfolio/research-publication dimension is real and intended but is the
-**post-v1 sandbox the tool enables**, not a gate on shipping. So Phase 3b is judged
-by whether it reliably feeds the working tool, not by whether it produces something
-publishable.
+**post-v1 sandbox the tool enables**, not a gate on shipping. So Slice 4 is judged
+by whether it reliably lights up the Player Page for the friend group's weekly
+workflow, not by whether it produces something publishable.
 
 ## 2. Current state — what's shipped, what's next
 
-Slice numbering follows ADR-0010's post-grilling "engine-work split." The shipped/next
-picture:
+Slice numbering follows ADR-0010's post-grilling "engine-work split."
 
 - **Slice 1 — done, deployed to Vercel.** Postgres schema (Neon), the `week_summary`
   read-view, hand-seeded sample data (since removed), three-tier Clerk auth
   (public / friend-gated / admin), and a Slate Dashboard skeleton.
-- **Slice 3 — team-level ingestion + MOV-ELO — in progress.** Two phases:
-  - **Phase 3a (historical backfill) — DONE and live on prod.** A local one-shot
-    Python script (`scripts/backfill/`, run from the author's laptop against the prod
-    Neon connection string — _not_ deployed) computed 2021–2025 plus the **2026
-    Week-0 ELO baseline**. Current prod row counts (verified by
-    `scripts/verify-phase3a.mjs`, which passed 21/0): **6 seasons, 1424 games, 3212
-    `teamWeekStats` rows.**
-  - **Phase 3b (forward weekly cron) — design complete, implementation next. This is
-    the only remaining Slice-3 work.** The design layer was closed across three grilling
-    sessions: the two-tier unit of work (ADR-0026), handler idempotency + enqueue dedup
-    (ADR-0027), and discovery targeting (ADR-0028). The schema for it now exists in
-    `db/schema.ts` — the `drive` / `play` / `job_queue` tables (migration `0002`) and the
-    `game.playsFrozenAt` gate marker (migration `0003`) — with the migration files written.
-    What remains is the **build**: the typed enqueue layer, the discovery enumerator, the two
-    handlers (`ingest_game` / `aggregate_week`), drain mechanics, and cron wiring. Slice 3
-    ships when Phase 3b ships.
-- **Later:** Slice 4 (player-level ingestion + denormalised opponent-rank fields →
-  Player Page), Slice 5 (The Odds API → betting-line columns), Slices 6–9 (the page
-  slices: Game Detail, Player, Props, Team + Team Leaderboard).
+- **Slice 3 — team-level ingestion + MOV-ELO — ✅ COMPLETE, live on prod (~2026-06-29).**
+  Two phases, both shipped:
+  - **Phase 3a (historical backfill)** — a local one-shot Python script
+    (`scripts/backfill/`, run from the author's laptop against prod, _not_ deployed)
+    computed 2021–2025 plus the **2026 Week-0 ELO baseline**. Prod row counts (verified
+    21/0 by `scripts/verify-phase3a.mjs`): **6 seasons, 1424 games, 3212 `teamWeekStats`
+    rows.**
+  - **Phase 3b (forward weekly cron) — built + deployed.** The full pipeline is in
+    `lib/ingestion/` + `app/api/cron/` (inventory in §4), validated against Phase 3a's
+    Python as an independent source of truth — **machine epsilon on regular weeks
+    (1.11e-16), exact on playoff weeks**. Migrations `0002`/`0003` applied to dev and prod.
+    Crons live on **Vercel Pro**, **dormant until the 2026 season** (§4). The bundled
+    MOV-ELO methodology publication was cut (ADR-0010 2026-06-18 / ADR-0025), so Phase 3b
+    shipping _is_ Slice 3 complete.
+- **Slice 4 — player-level ingestion + denormalised opponent-rank fields → Player Page —
+  NEXT. This session designs it (§7).**
+- **Later:** Slice 5 (The Odds API → betting-line columns), Slices 6–9 (the page slices:
+  Game Detail, Player, Props, Team + Team Leaderboard).
 
-_(There is no active "Slice 2" in the current plan — the numbering jumped after the
-Slice-3 grilling re-split the original engine block. Slice 1 is the only slice shipped
-before Slice 3. Low-confidence on the historical reason for the gap; it does not matter
-for Phase 3b.)_
+_(There is no active "Slice 2" — the numbering jumped after the Slice-3 grilling re-split
+the original engine block. Slice 1 is the only slice shipped before Slice 3. Low-confidence
+on the historical reason; it does not matter for Slice 4.)_
 
-**What Phase 3a left for Phase 3b to consume:** the **2026 Week-0 baseline** — one
-`teamWeekStats` row per team at `season = 2026, week = 0`, carrying each team's
-regressed starting ELO for 2026. (Mean is exactly 1500.0 by construction — the
-ELO update is mean-preserving and regression is mean-preserving.) Phase 3b's first
-real run (2026 Week 1) reads these Week-0 ELO values as the input to the first weekly
-update. This hand-off is the entire reason Phase 3a had to run first: without it, the
-dashboard's ELO column would be 8–10 weeks of cold-start noise on a user-facing
-surface.
+**What the team-level pipeline hands to Slice 4 (in-season):** Phase 3b is **wired to write
+`teamWeekStats` rows weekly** but is **dormant in the offseason** (a verified no-op until ~Sept;
+§4). The present-tense facts: `teamWeekStats` holds Phase 3a's 2021–2025 rows **plus the 2026
+Week-0 baseline** (mean exactly 1500.0 by construction); nothing has consumed that baseline yet —
+its **first consumption is `aggregate_week` for 2026 Week 1**, in September. Slice 4 is the
+**first consumer of a Phase-3b output** — its opponent-defensive-rank fields **will** denormalise
+against those weekly team-week rows once they're being written (§7).
 
 ## 3. What Phase 3b is — the build ahead
 
 Phase 3b is the **forward, automated weekly ingestion pipeline**: every week during
 the season, pull the latest nflverse play-by-play, and write the new week's
 `game` / `drive` / `play` / `teamWeekStats` rows from 2026 Week 1 onward. It runs as
-Vercel cron functions sharing the Next.js deployment. **Seven ADRs govern it:** two are
+Vercel cron functions sharing the Next.js deployment. **Nine ADRs touch Phase 3b:** two
 foundational — **ADR-0008** (ingestion runtime / the Python boundary) and **ADR-0018**
-(which play columns become Postgres columns) — and five specify the pipeline's behavior
-end-to-end: **ADR-0016** (cron / retry), **ADR-0019** (write-once + completeness gate),
+(which play columns become Postgres columns); five specifying the pipeline's behavior
+end-to-end — **ADR-0016** (cron / retry), **ADR-0019** (write-once + completeness gate),
 **ADR-0026** (two-tier unit of work), **ADR-0027** (handler idempotency + enqueue dedup),
-and **ADR-0028** (discovery). The last three were added by the design grills and are the
-newest; §7 treats 0016/0019/0026/0027/0028 as the five that fully specify the runtime
-behavior. Each is summarized below in my words — the full ADRs can be pulled into the
-conversation if you need the exact wording:
+**ADR-0028** (discovery); and two added _during the build_ — **ADR-0029** (parquet reader,
+amends 0008) and **ADR-0030** (cron auth + wiring, amends 0016). Each is summarized below in
+my words — the full ADRs can be pulled into the conversation if you need the exact wording:
 
 **ADR-0008 — ingestion runtime and the Python boundary.**
 Production ingestion runs in **Vercel cron functions** (same deployment as the app —
 one auth boundary, one log stream), _not_ a separate worker service. The
 TypeScript/Python gap is bridged by **reading nflverse parquet releases directly in
-Node** (`apache-arrow` / `parquetjs` over HTTP from GitHub releases) — no Python in
-production. (Python exists only in the local backfill script, which is never
-deployed.)
+Node** — via **`hyparquet`** (**ADR-0029** amends ADR-0008's provisional
+`apache-arrow` / `parquetjs` naming; `hyparquet` reads both the schedule and the pbp from
+the nflverse-data release parquet over HTTP) — no Python in production. (Python exists only
+in the local backfill script, which is never deployed.)
 
 The nflverse play-by-play release is **one season-level parquet, cumulative, revised in
 place** — not per-week artifacts. nflverse overwrites the rolling file as the season
@@ -253,100 +249,95 @@ Closes filter (ii)'s mechanism and discovery's orchestration. Five decisions:
    enqueue gate** — aggregate is enqueued **only once all of the week's games are frozen**
    (this **amends ADR-0026**, dissolving a 5-attempt-cap-vs-precondition collision).
 
-## 4. Existing infrastructure — what's built vs. what Phase 3b creates
+**ADR-0029 — production parquet reader (amends ADR-0008).**
+Standardizes on **`hyparquet`** for both the schedule and the pbp, read from the nflverse-data
+release parquet over HTTP; supersedes ADR-0008's `apache-arrow` / `parquetjs` naming. Rationale:
+the ADR-0013 spike already validated `hyparquet`, `parquetjs` is effectively unmaintained, and
+pbp is parquet-only so one library is the lowest-surface-area choice. The schedule read is
+column-filtered; the per-game pbp read is the v1-lean "pull the season parquet, filter to
+`game_id` in memory" (row-group predicate pushdown deferred until/unless the 300s budget
+tightens). ET→UTC kickoff conversion uses the IANA tz database (Intl), not a hardcoded month
+cutoff.
 
-Be concrete about the starting point; this is where specific recall matters most.
+**ADR-0030 — cron auth + route wiring (amends ADR-0016).**
+The two cron routes are **allowlisted in `proxy.ts`** so Clerk's `protect()` does not redirect
+the cron's GET to `/sign-in` — a `3xx` Vercel reads as success, which would make an
+un-allowlisted cron a **silent no-op**. The real gate is an in-route **fail-closed
+`CRON_SECRET`** check (`verifyCron`); the middleware stays single-purpose. Routes declare
+`runtime = "nodejs"`, `maxDuration = 300` (**coupled to** `drain.ts`'s `DRAIN_BUDGET_MS =
+300_000`), `dynamic = "force-dynamic"`. `vercel.json` schedules anchor to ADR-0016's windows.
+**Requires Vercel Pro** (Hobby caps cron frequency at once/day and function duration at ~60s —
+surfaced as a deploy failure, resolved by upgrading). Carries the prod-sequencing checklist:
+migrate `0002`/`0003` → set `CRON_SECRET` in prod → _then_ deploy (crons go live on deploy).
 
-**Schema — `db/schema.ts` (the Drizzle source) vs. the live DB.** `db/schema.ts` **defines
-seven tables** — `season`, `team`, `game`, `team_week_stats`, plus the Phase 3b additions
-`drive`, `play`, and `job_queue` — and the `week_summary` view. But the **live database holds
-only four tables + the view.** Migration files present: `0000`–`0003`. **`0000` / `0001` are
-applied** (the four live tables + `week_summary` view). **`0002` (creates `drive` / `play` /
-`job_queue`) and `0003` (adds `game.plays_frozen_at`) are committed but NOT applied to any
-database** — confirmed against Neon dev and prod, which hold only
-`season` / `team` / `game` / `team_week_stats` + the `week_summary` view. So those three tables
-**do NOT exist in the DB yet**, and `game.plays_frozen_at` is **not on the live `game` table.**
-Drizzle applies in sequence, so **applying `0002` then `0003` to the working DB is the first
-implementation step.** (The `season` / `team` / `game` / `team_week_stats` rows are live on
-prod from Phase 3a.)
+## 4. Existing infrastructure — what Slice 4 inherits
 
-- **`game`** — exists, populated by Phase 3a for 2021–2025. Has columns Phase 3b's
-  completeness gate relies on: `homeScore` / `awayScore`, a `gameStatusEnum`
-  (`scheduled` / `in_progress` / `final`), `gameType` enum, `isNeutralSite`,
-  `isInternational`, weather columns, and a unique **`nflverseGameId`** (the idempotency
-  key for upserts) plus an `oddsApiEventId` (for Slice 5). **Added by migration `0003`:
-  `playsFrozenAt`** — a nullable `timestamptz` that is the `ingest_game` gate-passed /
-  freeze-point marker (ADR-0028): NULL until the game's plays pass the completeness gate,
-  set-once on pass as the handler's last step. This is filter (ii)'s completeness read for
-  `ingest_game` and is deliberately distinct from `status` (a game can be `final` with plays
-  still incomplete). **Defined in `db/schema.ts` and `0003`, but `0003` is unapplied, so this
-  column is NOT on the live `game` table yet** — it lands when the migration runs. Indexed
-  reads use the existing `game_season_week_idx` on `(season_id, week)`. Phase 3b writes forward
-  `game` rows (2026 wk1+).
-- **`teamWeekStats`** — exists, holds Phase 3a's output (EPA columns, `eloRating`,
-  `eloChange`, `sosRank`, win/loss/tie record, traditional per-game aggregates). Each
-  row is **season-to-date through its week** (cumulative). Phase 3b writes forward rows.
+The team-level pipeline (Phase 3b) is **built, deployed, and proven**. Slice 4 is not starting
+from scratch — it inherits a working ingestion machine and forward play data. (Specific recall
+still matters most here: exact column / file / ADR names are claims to confirm against the repo
+— §6.)
 
-  **Per-week row counts (regular season):** the table carries a **constant 32 rows per
-  week** — every team gets a row, and bye teams are emitted via **carry-forward** (ELO
-  unchanged, `eloChange = 0`), not skipped (ADR-0021, confirmed in its row-count table).
-  **Games per week is _not_ constant:** ~13–16, dipping on bye weeks (byes ~weeks 5–14,
-  2–6 teams/week). These are two different counts the aggregation step must track —
-  **32 team-rows to write** vs. a **variable expected game count to gate on.**
+**Schema + migrations — applied.** `db/schema.ts` defines **seven tables** — `season`, `team`,
+`game`, `team_week_stats`, `drive`, `play`, `job_queue` — and the `week_summary` view.
+Migrations `0000`–`0003` are **all applied to dev and prod** (`0002` created `drive` / `play` /
+`job_queue` + the `job_type` / `job_status` enums; `0003` added `game.plays_frozen_at`). Prod
+verified post-migration: the marker column present, `drizzle.__drizzle_migrations` shows **4**,
+data intact (**1424 games / 3212 `teamWeekStats`**). The **`player*` tables Slice 4 needs do NOT
+exist yet** — they are this slice's first schema work.
 
-- **`drive`** — **defined in `db/schema.ts` and created by migration `0002` — but `0002` is
-  unapplied, so the table does NOT exist in the DB yet.** Created when `0002` runs, then
-  forward-only (empty for 2021–2025, populated 2026 wk1+). Shape per ADR-0013 /
-  `docs/parquet-mapping.md`: `driveNumber` (the `fixed_drive` canonical number), `result`,
-  `playCount`, `timeOfPossession`, `firstDowns`, `insideTwenty`, `endedWithScore`, and
-  `UNIQUE(game_id, drive_number)` (the ingest dedup key). `play.driveId` FKs to it.
-- **`play`** — **defined in `db/schema.ts` and created by migration `0002` — but `0002` is
-  unapplied, so the table does NOT exist in the DB yet** (forward-only/empty after apply) per
-  **ADR-0015**'s ownership boundary; its column set is
-  governed by ADR-0018 and finalized in `docs/parquet-mapping.md`. Phase-3b-relevant
-  specifics: **denormalised `seasonId` / `week`** (so `aggregate_week`'s season-to-date scan
-  filters here without a join to `game`), **resolved `posteamTeamId` / `defteamTeamId` FKs**
-  (nflverse abbreviations resolved to `team_id` at ingest), the **`UNIQUE(game_id, play_id)`**
-  upsert/idempotency key, and an index on `(season_id, week)` for that scan. Player-attribution
-  columns are captured now as nullable TEXT (no FK — the `player` table is Slice 4).
-- **`job_queue`** — **defined in `db/schema.ts` and created by migration `0002` — but `0002`
-  is unapplied, so the table does NOT exist in the DB yet** (created on apply). The
-  earlier "proposed, not settled" caveat is **superseded** — the shape is settled in code:
-  a single generic table with a **`jobType` enum** (`ingest_game` | `aggregate_week`), a
-  per-type **JSONB `payload`** (typed at the TS boundary as a discriminated union on
-  `jobType`), a **`jobStatus` enum** (`pending` / `in_progress` / `completed` / `failed`),
-  `notBefore`, `createdAt`, **`startedAt`** (drives the 15-min stall sweep), `retryCount`, and
-  the partial index **`job_queue_pending_idx … WHERE status = 'pending'`**. Its _behavior_ now
-  has dedicated ADRs: **ADR-0026** (the unit-of-work taxonomy the payload carries), **ADR-0027**
-  (handler idempotency + the ensure-exists dedup guard, and the deliberate decision to add **no**
-  uniqueness index on the logical key), and **ADR-0028** (how discovery enqueues into it). Note
-  the logical job key lives _inside_ `payload` (`nflverseGameId` for ingest; `season` + `week`
-  for aggregate), **not** as a top-level column — ADR-0027 explains why there is no index on it.
+**`play` / `drive` are EMPTY in every database right now — only the _schema_ exists.** Phase 3a
+never wrote them (team-level only, ADR-0015's forward-only boundary), and Phase 3b is a verified
+no-op until ~Sept, so both tables **populate from 2026 Week 1 onward**. Slice 4 therefore designs
+against an **empty forward table** — the same offseason situation §7 describes. What exists _now_
+is the column shape, not rows: crucially, the **`play` schema already has the participant
+columns** — `rusherPlayerId` / `Name`, `receiverPlayerId` / `Name`, `passerPlayerId` / `Name` as
+**nullable TEXT, no FK** — defined for Phase 3b's ingestion path per **ADR-0018**, which
+explicitly deferred the `player` table + the text→`player_id` resolution to Slice 4. So the
+columns are **in place now**; player identity **starts landing in 2026 Week 1**, and Slice 4 adds
+the `player` table, the FK, and the resolution. `play`'s schema also carries denormalised
+`seasonId` / `week`, resolved `posteamTeamId` / `defteamTeamId` FKs, the `UNIQUE(game_id,
+play_id)` upsert key, and an index on `(season_id, week)` (all defined, currently unpopulated).
 
-**Cron / API infrastructure:** **none exists yet.** There is no `vercel.json`, no cron
-route, and no API route handlers at all — `app/` contains only page routes (dashboard,
-sign-in/up, access-denied, layout). **Phase 3b builds the first cron, the first
-`vercel.json` cron config, the first API/handler route, and the `HANDLERS` map from
-scratch.**
+**`teamWeekStats` currently holds Phase 3a's 2021–2025 + 2026-Week-0 rows; it becomes
+weekly-updated in-season** (the Phase 3b pipeline writes a new week's rows as that week's games
+freeze — **dormant now**, first forward write is 2026 Week 1). Columns: per-team-week EPA,
+`eloRating`, `eloChange`, `sosRank`, win/loss/tie record, traditional per-game aggregates — each
+row season-to-date through its week. **Slice 4's opponent-rank denormalisation reads from here** —
+the producer→consumer dependency (§7). (Row shape: a constant 32 rows per
+regular-season week, byes carry-forward; ragged 14/8/4/2 in the playoffs — ADR-0021.)
 
-**DB client (`db/index.ts`):** the Neon **pooled** client using the
-`@neondatabase/serverless` `Pool` driver over WebSocket (`ws`) — chosen specifically
-because ADR-0008's chunked transactional ingestion needs real multi-statement
-transactions (the HTTP driver can't do them). Everything touching the DB must run in
-the **nodejs** runtime, never edge. Drizzle is configured with `casing: "snake_case"`.
+**The Phase 3b ingestion machine — built and reusable** (`lib/ingestion/`, 10 modules):
+`schedule.ts` + `nflverse.ts` (the hyparquet release reader, ADR-0029) · `pbp.ts` + `parse.ts`
+(pbp reader + type-boundary parsing) · `discovery.ts` (the enumerator) · `job-queue.ts` (typed
+enqueue + the ensure-exists guard) · `ingest-game.ts` (handler + completeness gate + team
+resolution) · `aggregate-week.ts` (ELO / EPA / SOS / record + carry-forward) · `drain.ts`
+(stall-sweep → claim `FOR UPDATE SKIP LOCKED` → dispatch → retry/backoff) · `cron-auth.ts`.
+Routes: `app/api/cron/{ingest,drain}/route.ts`; `vercel.json` crons; the `HANDLERS` dispatch
+map lives in `drain.ts`. The `job_queue` table is a single generic table — `job_type` enum
+(`ingest_game` | `aggregate_week`), per-type JSONB `payload` (discriminated union on `jobType`,
+the logical key _inside_ the payload, no index on it per ADR-0027), `job_status` enum,
+`notBefore` / `createdAt` / `startedAt` / `retryCount`, partial index `… WHERE status =
+'pending'`. **Whether Slice 4 extends this machinery or stands up a parallel path is a §7 fork.**
 
-**How Phase 3b's writes relate to Phase 3a's data (ADR-0015 ownership boundary):**
+**DB client (`db/index.ts`):** Neon **pooled** `@neondatabase/serverless` `Pool` over WebSocket
+(`ws`) — real multi-statement transactions, which the drain's `FOR UPDATE SKIP LOCKED` claim
+needs (the HTTP driver can't). Everything DB-touching runs in the **nodejs** runtime, never
+edge. Drizzle `casing: "snake_case"`.
 
-- **Phase 3a owns** rows for seasons 2021–2025, plus the single `(2026, week=0)`
-  slice. Its re-runs do scoped truncate-and-reload of _only_ those rows.
-- **Phase 3b owns** every `2026, week > 0` row and everything 2027+.
-- The boundary is what makes both safe to re-run independently. **Corollary:** if
-  Phase 3a is ever re-run _after_ Phase 3b has ingested 2026 in-season weeks, the new
-  Week-0 baseline no longer matches what Phase 3b's existing rows were computed from →
-  those downstream rows are stale. Recovery is **cascade-delete** (delete Phase 3b's
-  2026 wk>0, re-run 3a, re-enqueue the deleted weeks through the normal drain),
-  documented in `docs/runbook.md`. This is an exceptional recovery path, not routine —
-  and write-once (ADR-0019) is partly chosen to keep this cascade rare.
+**Deploy state.** Crons live on **Vercel Pro** (required — Hobby caps cron frequency at once/day
++ function duration at ~60s, ADR-0008 / ADR-0030); `CRON_SECRET` set in Vercel Production; the
+pipeline is a **verified no-op until ~Sept 2026** (offseason → `currentSeasonYear(now)` = 2026,
+whose games are all future/unscored → 0 enqueued / 0 drained — the correct offseason state).
+First-live-week verification + the standing live-2026 watch-items (ship-criterion hand-verify,
+the week-19 bye-derivation publication-timing check, gate-threshold tuning) live in
+**`docs/phase-3b-go-live-checklist.md`**.
+
+**ADR-0015 ownership boundary (carries into Slice 4).** Phase 3a owns 2021–2025 + `(2026, wk0)`;
+Phase 3b owns `2026, week > 0` and 2027+. If Phase 3a is ever re-run after Phase 3b has ingested
+2026 weeks, the new Week-0 baseline makes those rows stale → recovery is **cascade-delete**
+(delete Phase 3b's 2026 wk>0, re-run 3a, re-enqueue through the normal drain), in
+`docs/runbook.md`. Slice 4's player rows will be a **new dependent of this boundary** — a fork to
+keep in view (§7).
 
 ## 5. Working patterns — how the author works
 
@@ -457,60 +448,83 @@ on this project (a recent example: the claim that the ELO margin-of-victory term
 before it could be asserted). It is the project's core strength — use it from the first
 message, not as a last resort.
 
-## 7. Where we are right now, and the first thing to think about
+## 7. Where we are, and the first thing to design
 
-**Phase 3b design is done; this session is implementation.** The forward-cron pipeline is
-fully specified across five mutually-consistent ADRs — **0016** (cron/retry), **0019**
-(write-once + completeness gate), **0026** (two-tier unit of work), **0027** (handler
-idempotency + enqueue dedup), **0028** (discovery: targeting, the `playsFrozenAt` marker, the
-active window, the enqueue assembly, the relocated aggregate precondition). The schema and its
-migrations **`0002`** (`drive` / `play` / `job_queue`) and **`0003`** (`game.playsFrozenAt`)
-are written and committed but **not yet applied to any database** (see §4); a
-separate **implementation kickoff brief** exists that front-loads the build order, the
-intuitive-but-wrong traps, and the consciously-deferred items. There is no design work left to
-do — the job now is to build to that spec.
+**Slice 3 is complete and shipped** — Phase 3a + Phase 3b are live on prod; the team-level
+pipeline runs forward automatically (§2 / §4). **This session opens Slice 4.**
 
-**Your role shifts from grilling to review-and-trap-watch.** During design you grilled forks;
-the ADRs settled them, so there are fewer genuine forks left. Your value in implementation is
-two different things:
+Per ADR-0010's engine-work split, Slice 4 is **"player-level ingestion + denormalised opponent
+rank fields (lights up the Player Page)"** — sequenced _after_ Slice 3 (team-level ingestion +
+MOV-ELO) and _before_ Slice 5 (The Odds API). Quote ADR-0010: "**Slice 4** player-level
+ingestion + denormalised opponent rank fields (lights up the Player Page)."
 
-- **Trap-watch.** Catch when an implementation choice is quietly _re-opening_ a settled
-  decision. The kickoff brief's trap list is your early-warning set — the handler that
-  _waits_ instead of asserting, `playsFrozenAt` set on play-write instead of gate-pass,
-  `record` read-own-and-increment, discovery reading job-status. When you see one, say so and
-  point at the ADR it violates.
-- **Review built code against the ADRs** — the same move as reviewing the drafted ADR
-  against the decisions at the end of the design session, now applied to handlers, the
-  enumerator, and the migration: does the code do what the ADR says, without drift.
-- **Still-grill the genuine deferrals.** A few sub-decisions the ADRs deferred _are_ real
-  forks and still earn the structured format: drain chunk sizing (after plays/game is
-  measured), the per-game pbp read strategy (incl. the unconfirmed row-group-pushdown
-  question), and the completeness-gate thresholds. Treat those in grill mode; treat the rest
-  in review mode.
+**Your mode flips back from review to grilling.** Phase 3b's briefing narrowed you to
+review-and-trap-watch because its design was settled in ADRs. Slice 4's _pipeline_ is
+greenfield, so **§5's full grill-with-docs test is live again** — when a fork meets all three
+triggers (more than one defensible answer / durable-hard-to-reverse / wrongness-propagates), you
+_initiate_ the structured format. Open in grill posture, not review.
 
-**Implementation is several sessions, not one.** The work — typed enqueue layer, discovery
-enumerator, two non-trivial handlers, drain mechanics, cron wiring, plus applying the migration
-and the hand-verification — is too much for one context without risking a mid-handler
-compaction. The kickoff brief's build order is the natural seam list; take it in chunks against
-fresh contexts, with the five ADRs and the kickoff brief as the shared inputs each time.
+**But flag what's already settled, so the session doesn't re-litigate closed ground:**
 
-**The first chunk: apply `0002` then `0003`, then the typed enqueue layer + the discovery enumerator.**
-This is the clean opening slice — the spine everything else hangs off, and it exercises the
-load-bearing invariants before any handler exists. What to watch as it's built:
+- **ADR-0009 + ADR-0011** set the _storage principle_ — compute live when "just-slow",
+  denormalise onto `playerGame` at ingestion when a field is multi-view / wrong-shape,
+  materialise running season-to-date totals at ingestion (window-functions-on-read are
+  bug-prone). ADR-0011 already decides `targetShare` / `rushAttemptShare` / `airYardsShare` +
+  the `seasonToDate*` columns and the recalc-on-historical-edit maintenance note. Don't re-grill
+  the denormalise-vs-compute-live _principle_; do grill where the _new_ fields land.
+- **ADR-0018** already had Phase 3b capture `rusher/receiver/passer` id+name on `play` as
+  nullable TEXT (no FK) — "the `player` table is Slice 4, which adds the FK and resolves
+  text→player_id then." Player identity is already landing in the DB.
+- **ADR-0015** scoped Phase 3a team-level only, so `player*` tables are genuinely new.
 
-- The **two paired invariants** (ADR-0028 §5): INSERT-only-from-discovery and live-scoped
-  ensure-exists. They are the whole reason filter (i) is a complete dedup story; an enumerator
-  that lets a handler INSERT, or a guard that skips on any-row-including-`failed`, silently
-  breaks it.
-- **Discovery targets data-state, never job-status** (ADR-0028 §3/§4) — `playsFrozenAt IS
-NULL` and `NOT EXISTS teamWeekStats`, never "a failed/completed job exists."
-- The **aggregate enqueue-gate** (the relocated precondition, ADR-0028 §5): aggregate is
-  enqueued only once all of the week's games are frozen — _not_ enqueued unconditionally with
-  a handler-runtime `COUNT==expected` backoff. This is the amends-0026 decision; the
-  intuitive build reintroduces exactly what it removed.
-- The payload typed as a **discriminated union on `jobType`**, narrowed once at drain
-  (type-safety is a standing project value; this is where it pays off).
+**The load-bearing opening fork (frame it; pull substance from the repo, not from this
+briefing).** Slice 4 produces **player-week rows that must denormalise against the team-week
+outputs Phase 3b now produces** — an opponent-defensive-rank field that depends on ranking teams
+by their `teamWeekStats` defensive metrics. That's a **producer→consumer dependency** between two
+pipelines (note: ADR-0011's _text_ doesn't actually spell out `opponentDefenseRank`, only the
+share / seasonToDate fields — so this field's storage + timing is genuinely open). Three sub-forks
+likely earn the grill:
 
-(Reminder per §6: the design specifics here are settled in the ADRs, but exact column names,
-index names, and file paths are still claims to confirm against the repo as you review — the
-codebase agent has ground truth, you have the reasoning.)
+  (i) **Player-data source** — the same nflverse pbp parquet Phase 3b already pulls (player
+      ids/names are already on `play`) vs. a separate player-stats / roster / weekly-stats
+      nflverse release. Reuse vs. a richer/cleaner dedicated source.
+
+  (ii) **Pipeline integration** — extend the existing `job_queue` / discovery / drain / handler
+      machinery (a new job type, or folded into `ingest_game`) vs. a parallel path. Phase 3b's
+      drain/retry/idempotency infra is built and proven — reuse is attractive, but the
+      unit-of-work boundary may differ for player rows. **Reuse also inherits a sizing
+      assumption:** the drain's `DRAIN_HEADROOM_MS = 30_000` was calibrated against **~2.76 s per
+      _game_ ingest**; player-level work has different volume (tens of players per game), so
+      "reuse the drain/job_queue machinery" silently carries "…and re-check the 300 s budget +
+      headroom against player-work volume." Make that re-check explicit, not inherited.
+
+  (iii) **Where _and which week's rank_ the opponent-rank denormalisation uses.** Two questions
+      hide here, not one. (a) _Where it runs_ — at player-ingest time (snapshot the rank,
+      ADR-0011's at-ingestion pattern; ADR-0011's recalc-on-edit note is prior art for the
+      snapshot semantics) vs. a downstream pass — given it depends on the team-week ranks being
+      computed first. (b) _Which week's rank_ — and this is the load-bearing one, because
+      `teamWeekStats` for a week is **finalized on a lag** (`aggregate_week` closes a week only
+      after all its games freeze — the Monday-ingests / Tuesday-aggregates rhythm). So a
+      player-week row for week N must choose: the opponent's defensive rank **entering** the
+      matchup (week N−1's finalized ranks) vs. **after** it (week N). "Rank entering the matchup"
+      is the likely product want for a weekly-pick-prep tool — but that's a **product call for
+      the author to confirm in-session**, and the live advisor should grill it explicitly rather
+      than discover it midway through implementation.
+
+Present these as forks to grill, not as settled. Confirm/refine against ADR-0010, ADR-0009 /
+0011, ADR-0018, and the actual nflverse player-data sources before recommending.
+
+**Hand-off facts a fresh advisor needs:**
+
+- The **team-level pipeline (Phase 3b) is live and is an INPUT to Slice 4** — its `teamWeekStats`
+  rows are what the opponent-rank fields denormalise against. Slice 4 is the first consumer of a
+  Phase-3b output.
+- It's the **offseason** (~June 2026) — the same design-ahead-of-the-season window Phase 3b used.
+  Player ingestion also goes live for the **2026 season** (~Sept), so Slice 4 should be built +
+  deployed before then.
+- Phase 3b's infra — cron, `job_queue`, discovery, drain, the hyparquet reader, the nodejs/Pool
+  DB client — all exist and are reusable (§4 inventory).
+
+(Reminder per §6: the design specifics are open, but exact ADR numbers, column lists, file paths,
+and nflverse source names are claims to confirm against the repo — the codebase agent has ground
+truth, you have the reasoning.)

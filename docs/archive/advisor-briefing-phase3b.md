@@ -1,5 +1,12 @@
 # Advisor briefing — NFL Analytics, Phase 3b
 
+> **⚠️ HISTORICAL — design-phase artifact, no longer maintained.** This is the older
+> (Phase 3b *design*-era) advisor briefing. It is superseded by the canonical, maintained
+> briefing at `docs/advisor-briefing-template.md` (refresh §§1–4/§7 per phase; §§5–6 are
+> durable). Kept for provenance only; do not seed a fresh session from this file.
+
+---
+
 > **Purpose of this document.** You are an architecture advisor in a separate chat
 > that cannot see the repo. This briefing is your only ground truth. It was written
 > by the codebase agent with every specific claim (file paths, ADR numbers, schema

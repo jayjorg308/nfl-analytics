@@ -12,6 +12,13 @@ This project uses several documents with distinct, non-overlapping roles:
   parquet → Postgres ingestion.
 - `docs/adr/*` — architectural decisions, one ADR per decision.
 - `CONTEXT.md` — domain language and product framing.
+- `docs/advisor-briefing-template.md` — the canonical briefing for a separate
+  architecture-advisor session (refresh §§1–4/§7 per phase; §§5–6 durable).
+  Currently scoped to Slice 4. Older phase briefings are under `docs/archive/`.
+- `docs/runbook.md` — manual-override and recovery procedures for prod
+  analytical data (corrective SQL, cascade re-runs).
+- `docs/phase-3b-go-live-checklist.md` — first-live-week verification + the
+  standing live-2026 watch-items for the Phase 3b forward-cron pipeline.
 
 When in doubt: implementation questions go to Drizzle, "why" questions
 go to schema-design.md or the ADRs, source-system questions go to
