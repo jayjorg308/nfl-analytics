@@ -19,6 +19,11 @@ const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/access-denied",
+  // Phase 3b cron routes (ADR-0030): public to the Clerk gate ONLY so protect() does not
+  // redirect Vercel's cron GET to /sign-in (a 3xx the cron treats as success → silent no-op).
+  // The real gate is the in-route CRON_SECRET check (verifyCron); proxy.ts stays single-purpose.
+  "/api/cron/ingest",
+  "/api/cron/drain",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {

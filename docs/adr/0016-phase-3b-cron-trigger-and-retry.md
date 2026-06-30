@@ -6,6 +6,8 @@ ADR-0006's 30-minute timing was written before the nflverse parquet release cade
 
 ## Cron architecture: two entries
 
+> **Note (2026-06-19): the route WIRING + auth is settled by [ADR-0030](0030-phase-3b-cron-auth-and-wiring.md).** This section's cadence is unchanged; ADR-0030 adds the concrete `vercel.json` schedules (the drain's two active windows expressed as three entries by combining symmetric days), the two `GET` routes, and the auth model: the cron paths are **allowlisted in `proxy.ts`** (else Clerk's `protect()` redirects the cron's GET to `/sign-in` — a `3xx` Vercel reads as success → **silent no-op**), gated by an in-route fail-closed `CRON_SECRET` check. **Re: "payload is Zod-validated at dispatch" below** — Zod is not in the dependency tree; v1 narrows the payload by `jobType` (the discriminated union) at the drain boundary, and the payload originates only from discovery's typed enqueue + the manual runbook (a controlled, internal boundary), so a runtime schema-validator is a deferred refinement, not a v1 gate.
+
 Phase 3b uses **two cron entries** with distinct responsibilities, both dispatching through the same `HANDLERS` map:
 
 - **Primary scheduled cron** fires Monday, Tuesday, and Friday at 10:00 UTC (~5-6am ET). Aligned to nflverse's release cadence, not to game-end time. On each invocation it discovers expected work for the day, attempts to process available parquet, and enqueues a `jobQueue` retry (with `not_before` set 1 hour out) for anything not yet available. Monday handles Sunday games (and rare Saturday games during the late-season schedule). Tuesday handles Monday Night Football. Friday handles Thursday Night Football.
