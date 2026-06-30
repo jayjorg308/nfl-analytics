@@ -51,14 +51,11 @@ See [`CONTEXT.md`](CONTEXT.md) for the full domain vocabulary.
 | ORM / migrations     | **Drizzle ORM** + **drizzle-kit**          | schema-as-code is the canonical reference                                                    |
 | Auth                 | **Clerk**                                  | three-tier model: public / authed / admin ([ADR-0005](docs/adr/0005-three-tier-auth.md))     |
 | Historical ingestion | **Python** (`uv`-managed)                  | one-shot local backfill ([ADR-0008](docs/adr/0008-ingestion-runtime-and-python-boundary.md)) |
+| Forward ingestion    | **Parquet-in-Node** (`hyparquet`) on **Vercel cron** | nflverse pbp → `game`/`drive`/`play`/`teamWeekStats` from 2026 Wk 1; `jobQueue` drain ([ADR-0029](docs/adr/0029-production-parquet-reader-hyparquet.md), [ADR-0030](docs/adr/0030-phase-3b-cron-auth-and-wiring.md)) |
 | Hosting / CI         | **Vercel**                                 | push-to-deploy from `main`                                                                   |
 
 ### Upcoming
 
-- **Parquet-in-Node weekly ingestion**: a Vercel cron streaming nflverse
-  parquet directly in the Node runtime, writing `game` / `drive` / `play` /
-  `teamWeekStats` from 2026 Week 1 forward ([ADR-0008](docs/adr/0008-ingestion-runtime-and-python-boundary.md),
-  [ADR-0016](docs/adr/0016-phase-3b-cron-trigger-and-retry.md)).
 - **The Odds API**: live betting lines feeding the Slate Dashboard and Game
   Detail Page.
 - **MDX research pipeline**: snapshot + live-query chart components for
@@ -90,6 +87,14 @@ The guiding decisions (all captured under [`docs/adr/`](docs/adr/)):
 - **Idempotent, backup-first ingestion** ([ADR-0015](docs/adr/0015-phase-3a-scope-and-forward-only-play-drive.md),
   [ADR-0024](docs/adr/0024-phase-3a-backup-branch-sequencing.md)): writes are
   re-runnable and sequenced behind a backup branch.
+- **Forward weekly-cron pipeline** ([ADR-0016](docs/adr/0016-phase-3b-cron-trigger-and-retry.md),
+  [ADR-0019](docs/adr/0019-write-once-forward-ingestion-and-completeness-gate.md),
+  [ADR-0026](docs/adr/0026-phase-3b-unit-of-work-and-aggregation.md),
+  [ADR-0027](docs/adr/0027-phase-3b-handler-idempotency-and-enqueue-dedup.md),
+  [ADR-0028](docs/adr/0028-phase-3b-discovery-completeness-targeting.md)): a
+  `jobQueue`-drained cron that discovers each week's work, ingests games behind a
+  write-once completeness gate, and recomputes team-week aggregates idempotently —
+  continuing the ELO chain forward from Phase 3a's baseline.
 
 ### Documentation map
 
@@ -100,6 +105,8 @@ The guiding decisions (all captured under [`docs/adr/`](docs/adr/)):
 | [`docs/schema-design.md`](docs/schema-design.md)     | **why** the schema is shaped this way              |
 | [`docs/parquet-mapping.md`](docs/parquet-mapping.md) | nflverse parquet → Postgres source specifics       |
 | [`docs/adr/`](docs/adr/)                             | one architectural decision per file                |
+| [`docs/runbook.md`](docs/runbook.md)                 | prod correction & recovery procedures              |
+| [`docs/phase-3b-go-live-checklist.md`](docs/phase-3b-go-live-checklist.md) | first-live-week verification + live-2026 watch-items |
 | [`CONTEXT.md`](CONTEXT.md)                           | domain language & product framing                  |
 
 ---
@@ -111,6 +118,13 @@ builds and promotes automatically; there is no GitHub Actions workflow in this
 repo). The database is a **Neon** serverless Postgres branch; production and dev are separate Neon branches, and ingestion writes are validated by diffing a
 prod verifier run against dev's known-good output
 ([`scripts/verify-phase3a.mjs`](scripts/verify-phase3a.mjs)).
+
+The forward-ingestion crons (`vercel.json`) require the **Vercel Pro** plan — Hobby
+caps cron frequency and function duration below what the 30-minute drain windows and
+300 s budget need ([ADR-0008](docs/adr/0008-ingestion-runtime-and-python-boundary.md),
+[ADR-0030](docs/adr/0030-phase-3b-cron-auth-and-wiring.md)). They authenticate via a
+`CRON_SECRET` env var set in Vercel Production, and are dormant (a no-op) outside the
+NFL season.
 
 ---
 
@@ -144,21 +158,21 @@ Building toward a **v1 ship** along [ADR-0010](docs/adr/0010-v1-build-sequence.m
 
 - ✅ **Slice 1**: _deployed._ Schema, `weekSummary` view, hand-seeded data,
   three-tier Clerk auth, Slate Dashboard skeleton.
-- 🚧 **Slice 3: team-level ingestion + MOV-ELO** _(in progress)_
-  - ✅ **Phase 3a (historical backfill)**: complete and live on prod. Local
-    Python one-shot computing 2021–2025 plus the 2026 Week-0 ELO baseline:
-    MOV-ELO, EPA aggregation, strength-of-schedule, idempotent + backup-first
-    write. Prod matched dev line-for-line; verifier passed 21/0.
+- ✅ **Slice 3: team-level ingestion + MOV-ELO** _(complete, live on prod ~2026-06-29)_
+  - **Phase 3a (historical backfill)**: 2021–2025 plus the 2026 Week-0 ELO baseline
+    (MOV-ELO, EPA aggregation, strength-of-schedule, idempotent + backup-first write);
+    verifier 21/0 (6 seasons / 1424 games / 3212 `teamWeekStats`).
+  - **Phase 3b (forward weekly cron)**: built + deployed — discovery + a `jobQueue`
+    drain writing `game` / `drive` / `play` / `teamWeekStats` from 2026 Week 1 forward,
+    validated against Phase 3a to machine epsilon. Live on **Vercel Pro**, dormant until
+    the 2026 season.
 
 ### What's next
 
-1. **Phase 3b** _(the only remaining Slice 3 sub-slice)_: the Vercel weekly cron
-   writing `game` / `drive` / `play` / `teamWeekStats` from 2026 Week 1 forward,
-   consuming Phase 3a's baseline. Slice 3 completes when Phase 3b ships.
-2. **Slice 4**: player-level ingestion + denormalised opponent-rank fields
+1. **Slice 4**: player-level ingestion + denormalised opponent-rank fields
    (lights up the Player Page).
-3. **Slice 5**: The Odds API (line columns on the Slate Dashboard + Game Detail).
-4. **Slices 6–9**: the page slices: Game Detail, Player, Props, Team + Team
+2. **Slice 5**: The Odds API (line columns on the Slate Dashboard + Game Detail).
+3. **Slices 6–9**: the page slices: Game Detail, Player, Props, Team + Team
    Leaderboard.
 
 > The MOV-ELO methodology investigation once planned at `/research/elo-methodology`
