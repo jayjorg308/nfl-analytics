@@ -37,14 +37,14 @@ If Phase 3b has already ingested 2026 in-season weeks, the corrected 2026 Week-0
 
 **Scope:** EPA aggregates wrong (upstream play-level data was corrected and the rollup is stale), SOS values wrong, traditional stat aggregates wrong. Does *not* cover ELO corrections — those go through the game-outcome procedure above because ELO is iterative.
 
-**Downstream impact:** `team_week_stats` is read by the Slate Dashboard's `weekSummary` view directly. Corrections take effect immediately on next page render. Per ADR-0011, the materialised values on `playerGame` (`opponentDefenseRankPass/Rush`) reference `team_week_stats` at time of ingestion — historical corrections to `team_week_stats` do not auto-propagate to `playerGame`, and a separate cascade is documented as an admin operation when `playerGame` data exists.
+**Downstream impact:** `team_week_stats` is read by the Slate Dashboard's `weekSummary` view directly. Corrections take effect immediately on next page render. The opponent-defense ranks (`defenseRankPass` / `defenseRankRush`) are **columns on `team_week_stats` itself**, computed in `aggregate_week` (the `sosRank` pattern, ADR-0033) — **not** materialised on `playerGame`. The Player Page reads a matchup's "entering" rank by joining the opponent's week-(N−1) `team_week_stats` row, so a correction here **re-ranks on recompute and propagates to those reads automatically** — there is no `playerGame` snapshot to re-roll for this field.
 
 **Procedure:** `team_week_stats`' derived columns are computed by `scripts/backfill/build.py` — EPA and pass/rush yards from parquet, record and points from the schedule, SOS from the ELO chain. A wrong aggregate almost always means the computation or its input is wrong, not the stored row, so the correction is to fix the input and re-run, not to `UPDATE` the cell:
 
 1. **Backup branch:** `neonctl branches create --name pre-tws-correction-<YYYY-MM-DD>`.
 2. **Fix the input.** If a parquet revision corrected upstream data, re-running `build.py` picks it up. If it is a *methodology* change, edit the relevant module (`aggregate.py` for EPA, `sos.py` for SOS, `build.py` for record/traditional) **and** refresh the governing ADR — these values are methodology-locked (EPA: ADR-0020, SOS: ADR-0023), so the ADR and the code move together.
 3. **Re-run:** `cd scripts/backfill && uv run build.py` (scoped truncate-and-reload, atomic).
-4. **Verify:** `node scripts/verify-phase3a.mjs` (`21 PASS / 0 FAIL`). Corrections take effect on the Slate Dashboard immediately via the `week_summary` view; per ADR-0011, materialised `opponentDefenseRank*` on `playerGame` does not auto-propagate (a separate cascade when that data exists).
+4. **Verify:** `node scripts/verify-phase3a.mjs` (`21 PASS / 0 FAIL`). Corrections take effect on the Slate Dashboard immediately via the `week_summary` view; the `defenseRankPass` / `defenseRankRush` columns re-rank on the re-run and propagate to the Player Page's opponent-N−1 join automatically (ADR-0033) — no `playerGame` cascade for this field.
 
 A genuine one-off single-cell fix (the rare case where a full re-run is not warranted) is a single-row `UPDATE` per General principle #2 — but note it will be overwritten by the next `build.py` re-run, which is the authoritative source for these columns.
 
@@ -75,7 +75,7 @@ If cascade-delete happens more than once or twice in v1, ADR-0015 calls for a de
 
 Procedures for tables introduced in later slices land here as the slices ship:
 
-- **Slice 4 (player-level ingestion):** correcting `player_game` stats (with implied re-roll of `player_season_stats` and recomputation of `season_to_date_*` columns for all subsequent games in the season — per ADR-0011's maintenance note); reconstructing `player_team_membership` after a mid-season trade is corrected; admin UI procedures for `player_injury` / `player_injury_status` per ADR-0017.
+- **Slice 4 (player-level ingestion):** correcting `player_game` stats (with recomputation of `season_to_date_*` columns for all subsequent games in the season — per ADR-0011's maintenance note); reconstructing `player_team_membership` after a mid-season trade is corrected; admin UI procedures for `player_injury` / `player_injury_status` per ADR-0017.
 
 - **Slice 5 (Odds API):** correcting line snapshots after a sportsbook publishes a delayed correction; reconciling `oddsApiEventId` for games where The Odds API and nflverse disagree on event identity.
 

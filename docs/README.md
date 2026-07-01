@@ -19,6 +19,9 @@ This project uses several documents with distinct, non-overlapping roles:
   analytical data (corrective SQL, cascade re-runs).
 - `docs/phase-3b-go-live-checklist.md` — first-live-week verification + the
   standing live-2026 watch-items for the Phase 3b forward-cron pipeline.
+- `docs/slice-4-build-checklist.md` — the authoritative build task list for
+  Slice 4 (player-level ingestion + opponent-defense-rank), consolidating every
+  obligation from ADRs 0031/0032/0033.
 
 When in doubt: implementation questions go to Drizzle, "why" questions
 go to schema-design.md or the ADRs, source-system questions go to

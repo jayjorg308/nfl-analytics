@@ -254,8 +254,9 @@ export const play = pgTable(
     defteamTeamId: bigint({ mode: "number" }).references(() => team.id),
     // Participant descriptors (ADR-0018 query-proven). Raw nflverse ids/names as
     // nullable TEXT with NO FK — the `player` table is Slice 4, which adds the FK
-    // and resolves text→player_id then. Captured now so each write-once row is
-    // complete from a single parquet release (ADR-0019), sparing Slice 4 a revisit.
+    // and resolves text→player_id then (resolved in ADR-0031). Captured now so each
+    // write-once row is complete from a single parquet release (ADR-0019), sparing
+    // Slice 4 a revisit.
     rusherPlayerId: text(),
     rusherPlayerName: text(),
     receiverPlayerId: text(),

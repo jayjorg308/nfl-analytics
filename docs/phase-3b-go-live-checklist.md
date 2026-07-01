@@ -130,6 +130,32 @@ Measure (rather than assert) the fidelity cost of freezing at first-complete-rel
 
 ---
 
+## 6. Slice 4 first-live verifications (once player ingestion ships)
+
+These land when Slice 4 is built and running live (player ingestion also goes live for the 2026
+season). Both are first-live-2026 checks that cannot be done in the offseason (`play` / `playerGame`
+are empty until Week 1).
+
+- [ ] **`defenseRank*` external hand-verification (ADR-0033 / ship-criterion #4).** `defenseRankPass`
+      / `defenseRankRush` on `team_week_stats` sort **ASCENDING** (lowest defensive-EPA-allowed =
+      rank 1 = best defense — the *opposite* of `sosRank`, because the def-EPA columns are stored
+      offense-perspective). A same-code test proves consistency, not correctness, and the inversion
+      would pass one silently. So confirm against an **external known-good**: take a defense
+      independently known to be elite (or terrible) in some week and verify its rank lands at the
+      right end.
+  ```sql
+  SELECT t.abbreviation, w.defensive_pass_epa_per_play, w.defense_rank_pass,
+         w.defensive_rush_epa_per_play, w.defense_rank_rush
+  FROM team_week_stats w JOIN team t ON t.id = w.team_id JOIN season s ON s.id = w.season_id
+  WHERE s.year = 2026 AND w.week = <a settled week>
+  ORDER BY w.defense_rank_pass;   -- rank 1 row must have the LOWEST defensive_pass_epa_per_play
+  ```
+- [ ] **`ingest_game` live wall-time (ADR-0032).** The folded player aggregation was sized against a
+      2022-24 hyparquet proxy (~2s heaviest-game, ~100x under the 300s ceiling). Confirm the live
+      2026 number: a Week-1/2 `ingest_game` run stays comfortably sub-300s with player facts folded
+      in. Vercel function logs for `/api/cron/{ingest,drain}` show per-invocation duration; a single
+      game nowhere near 300s confirms the proxy held.
+
 ## Failure playbook (quick reference)
 
 | Symptom | Likely cause | Action |

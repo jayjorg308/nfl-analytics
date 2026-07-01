@@ -72,7 +72,7 @@ The Phase 3b `play` column list is finalised here (forward-only per ADR-0015; th
 | `order_sequence` | `play.orderSequence` | nflfastR canonical within-game sort key |
 | `week`           | `play.week`          |                                        |
 
-**Participants** (ADR-0018 query-proven; raw nflverse text, **no FK** — the `player` table is Slice 4, which adds the FK and resolves text→player_id then):
+**Participants** (ADR-0018 query-proven; raw nflverse text, **no FK** — the `player` table is Slice 4, which adds the FK and resolves text→player_id then (resolved in ADR-0031)):
 
 | Parquet column       | Schema target            |
 | -------------------- | ------------------------ |

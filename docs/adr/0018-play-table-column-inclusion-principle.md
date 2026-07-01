@@ -49,3 +49,14 @@ The Descriptor and Volatility tests do the including; this list does the cutting
 The cut is cheaply reversible in *both* directions — under-capture recovers via `ADD COLUMN` + a season-consistent backfill from the durable parquet (ADR-0015's blessed pattern); over-capture recovers via `DROP COLUMN`. Because mistakes are cheap both ways, make the principled cut and move on.
 
 The durable-parquet backstop is what licenses a clean analytical cut rather than a "grab all ~370 columns to be safe" reflex. "Near-zero marginal cost to map one more column" is precisely the reasoning that, unchecked, justifies capturing everything; the backstop is the brake on it. Capture what the tests include, map the obvious descriptor family at its natural breadth because the parser has those columns in hand anyway, and let the durable parquet be the backstop for everything else.
+
+## Update 2026-06-30: player-identity resolution deferred to Slice 4 (see ADR-0031)
+
+The participant columns above (`rusher_player_id` / `_name`, `receiver_player_id` / `_name`,
+`passer_player_id` / `_name`) land on `play` as **raw nullable text with no FK** — deliberately.
+The `player` table, the FK, and the text→`player_id` resolution are Slice-4 work, not captured
+here. That resolution is now settled in **[ADR-0031](0031-player-data-source-and-identity-resolution.md)**:
+the `*_player_id` values are GSIS ids, play-by-play is the identity source of record (existence
+derived from these columns via an ensure-exists upsert), and the roster/players release enriches
+only. A reader of this ADR wondering "where do these raw ids become a resolved player?" is routed
+there.

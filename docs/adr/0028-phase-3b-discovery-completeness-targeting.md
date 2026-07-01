@@ -312,6 +312,25 @@ implementation session must apply `0003` before any handler code reads the marke
 forward-dependency is explicit so no reader is surprised to find the column referenced before
 its first use.
 
+## Update 2026-06-30: "frozen" now includes per-game player facts (refined by ADR-0032)
+
+Slice 4 folds per-game player-fact writes into `ingest_game` (ADR-0032). Those writes join a new
+**post-gate transaction atomic with the `playsFrozenAt` write**, so the marker's meaning widens:
+
+- **§1 (the marker).** `playsFrozenAt` non-null now means **plays passed the gate AND the game's
+  per-game player facts (`playerGame` rows + the ADR-0031 player upserts) are materialised** — not
+  plays-complete alone. The marker **mechanism** is unchanged (set-once, `COALESCE`, last write on
+  gate-pass, dies with the `game` row on cascade-delete); only what a set marker *certifies* grows.
+- **§5 (the enqueue precondition).** Step 3's "enqueue `aggregate_week(W)` once all of W's
+  scheduled games are frozen" therefore now *also* guarantees **every `playerGame` row for W exists
+  before `aggregate_week` runs**. This is a **benefit**, not a complication: the tier-2
+  opponent-rank denormalisation writes *onto* `playerGame`, so the strengthened precondition is
+  exactly what it needs.
+
+The completeness **gate** itself (§1 / §4: score reconciliation + play-count floor, ADR-0019)
+stays **plays-only** — player-agg is a required post-gate *write*, not a gate condition. This is a
+**refined-by-ADR-0032** relationship; see ADR-0032 for the folded ordering and the measured sizing.
+
 ## Cross-references
 
 - ADR-0027 — filters (i)/(ii) and the (A)↔(B) idempotency split; this ADR closes filter (ii)'s
@@ -325,3 +344,5 @@ its first use.
   the freeze-point semantics the timestamp carries.
 - ADR-0015 — cascade-delete recovery; the marker-on-`game` form and pure data-state targeting
   keep it transparent across `completed` and `failed` prior jobs alike.
+- ADR-0032 — refines this ADR's `playsFrozenAt` / "frozen" meaning to include per-game player
+  facts (see the dated update above).
